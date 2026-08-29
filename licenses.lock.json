@@ -1,0 +1,241 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-08-27T10:30:00+08:00",
+  "policy": {
+    "allowed": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC"],
+    "review_required": ["GPL-2.0", "GPL-3.0", "AGPL-3.0", "SSPL-1.0", "BUSL-1.1", "PolyForm-Noncommercial-1.0.0", "UNKNOWN"],
+    "exact_versions_required": true
+  },
+  "dependencies": [
+    {
+      "name": "electron",
+      "repository": "https://github.com/electron/electron",
+      "version": "44.0.0",
+      "commit_sha": "bf0c4e67e9a834479ee171e61057f7516a381d25",
+      "license": "MIT",
+      "usage": "core_runtime",
+      "distribution": "npm_dependency",
+      "approved": true
+    },
+    {
+      "name": "react",
+      "repository": "https://github.com/facebook/react",
+      "version": "19.2.8",
+      "commit_sha": "1dd4ecbdabf826f527fc9a58c05ea70375b7d170",
+      "license": "MIT",
+      "usage": "renderer_ui",
+      "distribution": "npm_dependency",
+      "approved": true
+    },
+    {
+      "name": "react-dom",
+      "repository": "https://github.com/facebook/react",
+      "version": "19.2.8",
+      "commit_sha": "1dd4ecbdabf826f527fc9a58c05ea70375b7d170",
+      "license": "MIT",
+      "usage": "renderer_ui",
+      "distribution": "npm_dependency",
+      "approved": true
+    },
+    {
+      "name": "antd",
+      "repository": "https://github.com/ant-design/ant-design",
+      "version": "6.6.1",
+      "commit_sha": "164a310f742f801c49b3ff748b2823d5596104bd",
+      "license": "MIT",
+      "usage": "renderer_ui_components",
+      "distribution": "npm_dependency",
+      "approved": true
+    },
+    {
+      "name": "echarts",
+      "repository": "https://github.com/apache/echarts",
+      "version": "6.1.0",
+      "commit_sha": "c5a48f5f97d23e5379720870b8444cd05b50ffb4",
+      "license": "Apache-2.0",
+      "usage": "report_charts",
+      "distribution": "npm_dependency",
+      "approved": true
+    },
+    {
+      "name": "ajv",
+      "repository": "https://github.com/ajv-validator/ajv",
+      "version": "8.20.0",
+      "commit_sha": "0fba0b8e649909613cfce0999b149cd08f4a4987",
+      "license": "MIT",
+      "usage": "json_schema_validation",
+      "distribution": "npm_dependency",
+      "approved": true
+    },
+    {
+      "name": "pino",
+      "repository": "https://github.com/pinojs/pino",
+      "version": "10.3.1",
+      "commit_sha": "6b344980eae3ebed904fc87caf4bba0ab9dbe946",
+      "license": "MIT",
+      "usage": "structured_logging",
+      "distribution": "npm_dependency",
+      "approved": true
+    },
+    {
+      "name": "electron-vite",
+      "repository": "https://github.com/alex8088/electron-vite",
+      "version": "5.0.0",
+      "commit_sha": "91368b665518b9ceecf7240ed93c1078bfa54447",
+      "license": "MIT",
+      "usage": "build_tooling",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "vite",
+      "repository": "https://github.com/vitejs/vite",
+      "version": "7.3.6",
+      "commit_sha": "0a7b53ba230c6e68f502a89864534c607d393ab7",
+      "license": "MIT",
+      "usage": "renderer_build",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "repository": "https://github.com/vitejs/vite-plugin-react",
+      "version": "5.2.0",
+      "commit_sha": "fda3a86095556b49ae3c995eb57a30d4e0b8fa8d",
+      "license": "MIT",
+      "usage": "react_build",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "typescript",
+      "repository": "https://github.com/microsoft/TypeScript",
+      "version": "6.0.3",
+      "commit_sha": "050880ce59e30b356b686bd3144efe24f875ebc8",
+      "license": "Apache-2.0",
+      "usage": "typecheck_and_compile",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "vitest",
+      "repository": "https://github.com/vitest-dev/vitest",
+      "version": "4.1.11",
+      "commit_sha": null,
+      "license": "MIT",
+      "usage": "unit_and_integration_tests",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "@playwright/test",
+      "repository": "https://github.com/microsoft/playwright",
+      "version": "1.62.1",
+      "commit_sha": "26a9e470a7b3c7822084b09fb7f13902c5f37b51",
+      "license": "Apache-2.0",
+      "usage": "e2e_and_page_regression",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "electron-builder",
+      "repository": "https://github.com/electron-userland/electron-builder",
+      "version": "26.15.3",
+      "commit_sha": null,
+      "license": "MIT",
+      "usage": "windows_packaging",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "electron-builder-squirrel-windows",
+      "repository": "https://github.com/electron-userland/electron-builder",
+      "version": "26.15.3",
+      "commit_sha": null,
+      "license": "MIT",
+      "usage": "windows_packaging_peer",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "@types/node",
+      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "version": "26.4.0",
+      "commit_sha": null,
+      "license": "MIT",
+      "usage": "node_type_definitions",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "@types/react",
+      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "version": "19.2.18",
+      "commit_sha": null,
+      "license": "MIT",
+      "usage": "react_type_definitions",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "@types/react-dom",
+      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
+      "version": "19.2.5",
+      "commit_sha": null,
+      "license": "MIT",
+      "usage": "react_dom_type_definitions",
+      "distribution": "dev_dependency",
+      "approved": true
+    },
+    {
+      "name": "iflytek/astron-rpa",
+      "repository": "https://github.com/iflytek/astron-rpa",
+      "version": "research-only",
+      "commit_sha": "0cc6a33ddbc3f2a29700d08d1d27cefe0947b78d",
+      "license": "Apache-2.0",
+      "usage": "architecture_reference_only",
+      "distribution": "excluded",
+      "approved": false
+    },
+    {
+      "name": "lien0219/trademind-ai",
+      "repository": "https://github.com/lien0219/trademind-ai",
+      "version": "research-only",
+      "commit_sha": "b3ab0347222d49e3242430384fec73ecc2423dea",
+      "license": "Apache-2.0",
+      "usage": "architecture_reference_only",
+      "distribution": "excluded",
+      "approved": false
+    },
+    {
+      "name": "EchoHS/GeekezBrowser",
+      "repository": "https://github.com/EchoHS/GeekezBrowser",
+      "version": "research-only",
+      "commit_sha": "6f470cf16d97c80385fbeba2b2eafad756278098",
+      "license": "PolyForm-Noncommercial-1.0.0",
+      "usage": "architecture_reference_only",
+      "distribution": "excluded",
+      "approved": false
+    },
+    {
+      "name": "zeasin/qihang-erp-open",
+      "repository": "https://github.com/zeasin/qihang-erp-open",
+      "version": "research-only",
+      "commit_sha": "396923d61abc3be0ee4c3633d7b248abbab51fc9",
+      "license": "AGPL-3.0",
+      "usage": "business_concepts_reference_only",
+      "distribution": "excluded",
+      "approved": false
+    },
+    {
+      "name": "zeasin/qihang-oms",
+      "repository": "https://github.com/zeasin/qihang-oms",
+      "version": "research-only",
+      "commit_sha": "61a9987d74bddb29ea35153a453b719c81b49999",
+      "license": "AGPL-3.0",
+      "usage": "business_concepts_reference_only",
+      "distribution": "excluded",
+      "approved": false
+    }
+  ]
+}

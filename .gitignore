@@ -1,0 +1,34 @@
+node_modules/
+.pnpm-store/
+dist/
+out/
+coverage/
+playwright-report/
+test-results/
+output/
+.playwright-cli/
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+# Electron runtime data and sensitive browser profiles
+app-data/
+profiles/
+downloads/
+screenshots/
+exports/
+backup/
+
+# Research repositories are never part of the product build
+research-references/*
+!research-references/README.md
+
+# IDE and OS files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
