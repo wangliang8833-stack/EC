@@ -38,9 +38,11 @@ export function assertReportQuery(value: unknown): asserts value is ReportQuery 
 export function assertDataUpdateRequest(value: unknown): asserts value is DataUpdateRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('data update request must be an object')
   const input = value as Partial<DataUpdateRequest> & Record<string, unknown>
-  if (Object.keys(input).length !== 3 || typeof input.bizDate !== 'string' || !isoDate.test(input.bizDate)) {
-    throw new TypeError('bizDate is invalid')
-  }
+  const fields = Object.keys(input)
+  if (fields.some((field) => !['bizDate', 'platforms', 'shopIds', 'forceRefresh'].includes(field))) throw new TypeError('data update request contains unsupported fields')
+  if (fields.length < 3 || fields.length > 4) throw new TypeError('data update request fields are invalid')
+  if (typeof input.bizDate !== 'string' || !isoDate.test(input.bizDate)) throw new TypeError('bizDate is invalid')
+  if ('forceRefresh' in input && typeof input.forceRefresh !== 'boolean') throw new TypeError('forceRefresh is invalid')
   for (const [field, values] of [['platforms', input.platforms], ['shopIds', input.shopIds]] as const) {
     if (!Array.isArray(values) || values.length === 0 || values.some((item) => typeof item !== 'string' || !safeId.test(item))) {
       throw new TypeError(`${field} is invalid`)

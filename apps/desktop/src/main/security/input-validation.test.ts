@@ -79,9 +79,10 @@ describe('storage settings input validation', () => {
 describe('data update request validation', () => {
   it('accepts one exact ISO date and rejects ambiguous or expanded input', () => {
     expect(() => assertDataUpdateRequest({ bizDate: '2026-08-28', platforms: ['tmall'], shopIds: ['shop_a'] })).not.toThrow()
+    expect(() => assertDataUpdateRequest({ bizDate: '2026-08-28', platforms: ['tmall'], shopIds: ['shop_a'], forceRefresh: true })).not.toThrow()
     expect(() => assertDataUpdateRequest({ bizDate: '昨日', platforms: ['tmall'], shopIds: ['shop_a'] })).toThrow(/bizDate/)
     expect(() => assertDataUpdateRequest({ bizDate: '2026-8-28', platforms: ['tmall'], shopIds: ['shop_a'] })).toThrow(/bizDate/)
     expect(() => assertDataUpdateRequest({ bizDate: '2026-08-28', platforms: ['tmall'], shopIds: [] })).toThrow(/shopIds/)
-    expect(() => assertDataUpdateRequest({ bizDate: '2026-08-28', platforms: ['tmall'], shopIds: ['shop_a'], force: true })).toThrow(/bizDate/)
+    expect(() => assertDataUpdateRequest({ bizDate: '2026-08-28', platforms: ['tmall'], shopIds: ['shop_a'], force: true })).toThrow(/unsupported fields/)
   })
 })

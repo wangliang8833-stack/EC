@@ -15,8 +15,8 @@ export const TMALL_PRESET: PlatformPreset = {
   label: '天猫',
   loginUrl: 'https://myseller.taobao.com/home.htm',
   collectionProbeUrl: 'https://sycm.taobao.com/',
-  allowedHosts: ['taobao.com', 'tmall.com', 'alibaba.com', 'alipay.com'],
-  authenticatedHosts: ['myseller.taobao.com', 'sycm.taobao.com', 'qn.taobao.com'],
+  allowedHosts: ['taobao.com', 'tmall.com', 'alimama.com', 'alibaba.com', 'alipay.com'],
+  authenticatedHosts: ['myseller.taobao.com', 'sycm.taobao.com', 'one.alimama.com', 'qn.taobao.com'],
   credentialHosts: ['login.taobao.com', 'havanalogin.taobao.com', 'login.tmall.com', 'passport.alibaba.com']
 }
 

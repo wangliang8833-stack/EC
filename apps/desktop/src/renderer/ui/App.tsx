@@ -1,24 +1,36 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Dropdown, Form, Input, InputNumber, Modal, Popover, Select, Space, Steps, Switch, Table, Tag, message } from 'antd'
-import type { AccountCredentialInput, AccountPlatform, AccountSummary, CollectionProgress, CreateAccountInput, JobSummary, LoginState, ReportDataset, ScheduledJobInput, StorageDirectoryKind, SystemHealth, SystemStorageSettings, UpdateAccountInput, WorkspaceBounds, WorkspaceBrowserState, WorkspaceNavigationAction } from '@ecommerce/shared'
+import type { AccountCredentialInput, AccountPlatform, AccountSummary, CollectionProgress, CreateAccountInput, JobSummary, LoginState, ReportDataset, ScheduledJobInput, StorageDirectoryKind, SystemHealth, SystemStorageSettings, TmallWorkspaceShortcut, UpdateAccountInput, WorkspaceBounds, WorkspaceBrowserState, WorkspaceNavigationAction } from '@ecommerce/shared'
 import { EChart, type DashboardChartOption } from './EChart.js'
 import { mergeWorkspaceBrowserState } from './workspace-browser-state.js'
 import { markNotificationsRead, upsertNotification, type AppNotification, type NotificationInput } from './notifications.js'
+import { ProductReport } from './ProductReport.js'
+import { PromotionReport } from './PromotionReport.js'
+import { RoiCalculator } from './RoiCalculator.js'
 
-type ViewKey = 'overview' | 'quality' | 'jobs' | 'accounts' | 'settings' | 'help'
+type ViewKey = 'overview' | 'product-report' | 'promotion-report' | 'roi-calculator' | 'quality' | 'jobs' | 'accounts' | 'settings' | 'help'
 type ShopAction = 'open' | 'check' | 'probe'
 type WorkspaceAction = Exclude<ShopAction, 'open'>
-type IconName = 'dashboard' | 'database' | 'shop' | 'tasks' | 'settings' | 'folder' | 'cloud' | 'server' | 'chevron' | 'back' | 'forward' | 'refresh' | 'download' | 'bell' | 'help' | 'shield' | 'chart' | 'copy' | 'check'
+type IconName = 'dashboard' | 'database' | 'shop' | 'tasks' | 'settings' | 'folder' | 'cloud' | 'server' | 'chevron' | 'back' | 'forward' | 'refresh' | 'download' | 'bell' | 'help' | 'shield' | 'chart' | 'calculator' | 'copy' | 'check'
 
 interface NavGroup {
   key: string
   label: string
   icon: IconName
-  children: Array<{ key: ViewKey; label: string }>
+  pending?: boolean
+  view?: ViewKey
+  children: Array<{ key: ViewKey; label: string; pending?: boolean }>
 }
 
 const navGroups: NavGroup[] = [
-  { key: 'dashboard', label: '仪表盘', icon: 'dashboard', children: [{ key: 'overview', label: '销售总览' }] },
+  { key: 'dashboard', label: '仪表盘', icon: 'dashboard', children: [
+    { key: 'overview', label: '销售总览' },
+    { key: 'product-report', label: '商品报表' },
+    { key: 'promotion-report', label: '推广报表' }
+  ] },
+  { key: 'roi-calculator', label: 'ROI计算器', icon: 'calculator', view: 'roi-calculator', children: [] },
+  { key: 'ai-operations', label: 'AI自动运营', icon: 'tasks', pending: true, children: [] },
+  { key: 'ai-analysis', label: 'AI数据分析', icon: 'chart', pending: true, children: [] },
   { key: 'shops', label: '店铺列表', icon: 'shop', children: [] }
 ]
 
@@ -300,7 +312,7 @@ export function App(): React.JSX.Element {
     ? `${platformLabel(activeShop.platform)}-${activeShop.shopName}`
     : systemViewLabels[activeView]
     ? systemViewLabels[activeView]!
-    : navGroups.flatMap((group) => group.children).find(({ key }) => key === activeView)?.label ?? '销售总览'
+    : navGroups.find(({ view }) => view === activeView)?.label ?? navGroups.flatMap((group) => group.children).find(({ key }) => key === activeView)?.label ?? '销售总览'
   const isSystemView = !activeShop && activeView in systemViewLabels
   const unreadCount = notifications.filter(({ read }) => !read).length
 
@@ -324,13 +336,16 @@ export function App(): React.JSX.Element {
           <nav className="nav-list" aria-label="主导航">
             {navGroups.map((group) => {
               const isOpen = openGroups.has(group.key)
-              const containsActive = group.children.some(({ key }) => key === activeView) || (group.key === 'shops' && activeShop !== null)
+              const containsActive = group.view === activeView || group.children.some(({ key }) => key === activeView) || (group.key === 'shops' && activeShop !== null)
               return <div className={`nav-group ${isOpen ? 'open' : ''}`} key={group.key}>
-                <button className={`nav-group-button ${containsActive ? 'group-active' : ''}`} type="button" onClick={() => toggleGroup(group.key)}>
-                  <span className="nav-group-label"><Icon name={group.icon} />{group.label}</span><Icon name="chevron" />
+                <button className={`nav-group-button ${containsActive ? 'group-active' : ''} ${group.pending ? 'pending' : ''}`} type="button" disabled={group.pending} onClick={() => group.view ? void selectView(group.key, group.view) : toggleGroup(group.key)}>
+                  <span className="nav-group-label"><Icon name={group.icon} />{group.label}</span>
+                  {group.pending ? <span className="nav-pending-badge">待接入</span> : group.view ? null : <Icon name="chevron" />}
                 </button>
                 <div className="nav-children">
-                  {group.children.map((item) => <button key={item.key} type="button" className={`nav-child ${activeView === item.key && !activeShop ? 'active' : ''}`} onClick={() => void selectView(group.key, item.key)}>{item.label}</button>)}
+                  {group.children.map((item) => <button key={item.key} type="button" disabled={item.pending} className={`nav-child ${activeView === item.key && !activeShop ? 'active' : ''} ${item.pending ? 'pending' : ''}`} onClick={() => void selectView(group.key, item.key)}>
+                    <span>{item.label}</span>{item.pending ? <span className="nav-pending-badge">待接入</span> : null}
+                  </button>)}
                   {group.key === 'shops' ? accounts.map((account) => <div className={`nav-shop-row ${activeShopId === account.accountId ? 'active' : ''} ${account.enabled ? '' : 'disabled'}`} key={account.accountId}>
                     <button type="button" className="nav-shop-button" title={`${platformLabel(account.platform)}-${account.shopName} · ${loginStatusLabel(account.loginStatus)}`} onClick={() => selectShop(account)}>
                       <span className="shop-nav-label">{platformLabel(account.platform)}-{account.shopName}</span>
@@ -370,10 +385,13 @@ export function App(): React.JSX.Element {
 
         <main className={`main-canvas ${activeShop ? 'shop-workspace-active' : ''}`}>{activeShop ? <ShopWorkspace account={activeShop} isPreview={isBrowserPreview} action={workspaceAction} progress={collectionProgress[activeShop.accountId] ?? null} closing={workspaceClosing} onReady={handleWorkspaceReady} onCheck={() => void runWorkspaceAction(activeShop, 'check')} onProbe={() => void runWorkspaceAction(activeShop, 'probe')} onCancel={() => void cancelCollection(activeShop)} onBack={() => void leaveShopWorkspace(activeShop)} onError={(reason) => notify({ id: `workspace:${activeShop.accountId}:browser-error`, tone: 'error', title: '店铺后台打开失败', description: errorMessage(reason) })} /> : <div className="content-container">
           <div className="page-heading">
-            <div><div className="breadcrumb">工作台 / {activeLabel}</div><h1>{activeLabel === '销售总览' ? '多平台销售看板' : activeLabel}</h1><p>{activeView === 'overview' ? '按自然日查看全部有效店铺经营数据' : activeView === 'settings' ? '管理数据目录、程序环境与远程服务' : activeView === 'jobs' ? '管理自动采集时间、平台范围与批次执行策略' : activeView === 'help' ? '了解系统核心功能、业务架构与使用支持' : '阶段 0 本地管理工作台'}</p></div>
-            {activeView === 'settings' || activeView === 'help' ? null : <div className="heading-actions"><span className="demo-badge">{isBrowserPreview ? '演示数据' : '本地数据'}</span><Button icon={<Icon name="download" />} disabled>导出 CSV</Button></div>}
+            <div><div className="breadcrumb">工作台 / {activeLabel}</div><h1>{activeLabel === '销售总览' ? '多平台销售看板' : activeLabel}</h1><p>{activeView === 'overview' ? '按自然日查看全部有效店铺经营数据' : activeView === 'product-report' ? '查看商品流量、成交、退款与经营机会' : activeView === 'promotion-report' ? '查看推广消耗、成交归因、计划覆盖与数据质量' : activeView === 'roi-calculator' ? '测算商品推广的保本 ROAS、盈利周期与逐月现金流' : activeView === 'settings' ? '管理数据目录、程序环境与远程服务' : activeView === 'jobs' ? '管理自动采集时间、平台范围与批次执行策略' : activeView === 'help' ? '了解系统核心功能、业务架构与使用支持' : '阶段 0 本地管理工作台'}</p></div>
+            {activeView === 'settings' || activeView === 'help' ? null : <div className="heading-actions"><span className="demo-badge">{activeView === 'roi-calculator' ? '本地计算' : isBrowserPreview ? '演示数据' : '本地数据'}</span>{activeView === 'roi-calculator' ? null : <Button icon={<Icon name="download" />} disabled>导出 CSV</Button>}</div>}
           </div>
           {activeView === 'overview' ? <Dashboard accounts={accounts} isPreview={isBrowserPreview} progress={collectionProgress} onNotify={notify} /> : null}
+          {activeView === 'product-report' ? <ProductReport accounts={accounts} isPreview={isBrowserPreview} onNotify={notify} /> : null}
+          {activeView === 'promotion-report' ? <PromotionReport accounts={accounts} isPreview={isBrowserPreview} onNotify={notify} /> : null}
+          {activeView === 'roi-calculator' ? <RoiCalculator /> : null}
           {activeView === 'accounts' ? <AccountsView accounts={accounts} isPreview={isBrowserPreview} onAccountsChanged={refresh} onShopAction={selectShop} /> : null}
           {activeView === 'jobs' ? <JobsView jobs={jobs} accounts={accounts} isPreview={isBrowserPreview} onJobsChanged={setJobs} onNotify={notify} /> : null}
           {activeView === 'quality' ? <QualityView /> : null}
@@ -527,6 +545,20 @@ function ShopWorkspace({ account, isPreview, action, progress, closing, onReady,
     }
   }
 
+  async function openShortcut(shortcut: TmallWorkspaceShortcut): Promise<void> {
+    const leaseId = leaseIdRef.current
+    if (!leaseId || account.platform !== 'tmall' || isPreview || !window.desktopApi || browserBusy || closing) return
+    setBrowserBusy(true)
+    try {
+      const state = await window.desktopApi.accounts.openWorkspaceShortcut(leaseId, shortcut)
+      setBrowserState((current) => mergeWorkspaceBrowserState(current, state))
+    } catch (reason) {
+      onError(reason)
+    } finally {
+      setBrowserBusy(false)
+    }
+  }
+
   async function closeTab(tabId: string): Promise<void> {
     const leaseId = leaseIdRef.current
     if (!leaseId || isPreview || !window.desktopApi || browserBusy) return
@@ -559,6 +591,11 @@ function ShopWorkspace({ account, isPreview, action, progress, closing, onReady,
         ><Icon name="refresh" /></Button>
       </div>
       <Space className="shop-workspace-operations" size={8}>
+        {account.platform === 'tmall' ? <div className="shop-workspace-shortcuts" role="group" aria-label="天猫后台快捷入口">
+          <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('sycm')}>生意参谋</Button>
+          <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('wanxiang')}>万相台</Button>
+          <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('seller')}>卖家首页</Button>
+        </div> : null}
         <Button size="small" loading={closing} disabled={closing} onClick={onBack}>返回账号环境</Button>
         <Button size="small" loading={action === 'check'} disabled={action !== null || closing} onClick={onCheck}>检测登录</Button>
         {action === 'probe'
@@ -615,6 +652,7 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
   const [shopFilter, setShopFilter] = useState('all')
   const [reloadVersion, setReloadVersion] = useState(0)
   const [updating, setUpdating] = useState(false)
+  const [updateResult, setUpdateResult] = useState<{ type: 'success' | 'info' | 'warning' | 'error'; title: string; description: string } | null>(null)
   const today = shanghaiToday()
   const effectiveAccounts = [...new Map(accounts.filter(({ enabled }) => enabled).map((account) => [`${account.platform}/${account.shopId}`, account])).values()]
   const platformKeys = [...new Set(effectiveAccounts.map(({ platform }) => platform))].sort()
@@ -644,6 +682,7 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
   useEffect(() => {
     if (shopFilter !== 'all' && filteredAccounts.length === 0) setShopFilter('all')
   }, [accountSignature, shopFilter])
+  useEffect(() => setUpdateResult(null), [selectedDate, shopFilter])
   useEffect(() => {
     if (isPreview || !window.desktopApi || filteredAccounts.length === 0) { setDataset(null); setLoading(false); return }
     setLoading(true)
@@ -669,14 +708,22 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
   async function updateSelectedStores(): Promise<void> {
     if (isPreview || !window.desktopApi || filteredAccounts.length === 0) return
     setUpdating(true)
+    setUpdateResult(null)
     try {
       const result = await window.desktopApi.reports.update({ bizDate: selectedDate, platforms: selectedPlatforms, shopIds: selectedShopIds })
       const hasProblem = result.failed > 0 || result.needLogin > 0
-      onNotify({ id: `dashboard:update:${shopFilter}:${result.bizDate}`, tone: hasProblem ? 'warning' : 'success', title: `数据更新完成 · ${result.bizDate}`, description: `有效店铺 ${result.total} 家：更新 ${result.updated}、已有数据跳过 ${result.skipped}、待登录 ${result.needLogin}、失败 ${result.failed}。` })
+      const summary = `有效店铺 ${result.total} 家：更新 ${result.updated}、已有数据跳过 ${result.skipped}、待登录 ${result.needLogin}、失败 ${result.failed}。`
+      const problems = result.shops.filter(({ status }) => status === 'NEED_HUMAN_LOGIN' || status === 'FAILED').map(({ shopName, status, warning }) => `${shopName}：${status === 'NEED_HUMAN_LOGIN' ? '登录已失效' : '采集失败'}${warning ? `（${warning}）` : ''}`)
+      const description = [summary, ...problems].join(' ')
+      const title = hasProblem ? `数据更新未完成 · ${result.bizDate}` : result.skipped === result.total ? `数据已经是最新状态 · ${result.bizDate}` : `数据更新完成 · ${result.bizDate}`
+      const type = hasProblem ? 'warning' : result.skipped === result.total ? 'info' : 'success'
+      setUpdateResult({ type, title, description })
+      onNotify({ id: `dashboard:update:${shopFilter}:${result.bizDate}`, tone: hasProblem ? 'warning' : 'success', title, description })
       setReloadVersion((value) => value + 1)
     } catch (reason) {
       const description = errorMessage(reason)
       setLoadError(description)
+      setUpdateResult({ type: 'error', title: `数据更新失败 · ${selectedDate}`, description })
       onNotify({ id: `dashboard:update-error:${shopFilter}:${selectedDate}`, tone: 'error', title: '数据更新失败', description })
     } finally {
       setUpdating(false)
@@ -691,13 +738,16 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
   const dateLabel = selectedDate === today ? '今日' : selectedDate === shanghaiYesterday() ? '昨日' : selectedDate
   const activeProgress = filteredAccounts.map(({ accountId }) => progress[accountId]).find((value) => value && value.bizDate === selectedDate && value.stage !== 'completed' && value.stage !== 'failed' && value.stage !== 'cancelled')
   const updateButtonLabel = shopFilter === 'all' ? '更新全部有效店铺' : selectedShop ? '更新当前店铺' : `更新${platformLabel(selectedPlatforms[0] ?? '')}平台`
-  const toolbar = <div className="dashboard-toolbar">
-    <div className="dashboard-filter-controls">
-      <div className="dashboard-shop-control"><label htmlFor="dashboard-shop-filter">店铺筛选</label><Select id="dashboard-shop-filter" value={shopFilter} options={filterOptions} disabled={updating || effectiveAccounts.length === 0} onChange={(value) => { setShopFilter(value); setLoadError(null) }} /></div>
-      <div className="dashboard-date-control"><label htmlFor="dashboard-biz-date">数据日期</label><input id="dashboard-biz-date" type="date" value={selectedDate} max={today} disabled={updating} onChange={(event) => { if (event.target.value && event.target.value <= today) { setSelectedDate(event.target.value) } }} /><Button size="small" disabled={updating || selectedDate === today} onClick={() => setSelectedDate(today)}>今天</Button><Button size="small" disabled={updating || selectedDate === shanghaiYesterday()} onClick={() => setSelectedDate(shanghaiYesterday())}>昨天</Button></div>
+  const toolbar = <>
+    <div className="dashboard-toolbar">
+      <div className="dashboard-filter-controls">
+        <div className="dashboard-shop-control"><label htmlFor="dashboard-shop-filter">店铺筛选</label><Select id="dashboard-shop-filter" value={shopFilter} options={filterOptions} disabled={updating || effectiveAccounts.length === 0} onChange={(value) => { setShopFilter(value); setLoadError(null) }} /></div>
+        <div className="dashboard-date-control"><label htmlFor="dashboard-biz-date">数据日期</label><input id="dashboard-biz-date" type="date" value={selectedDate} max={today} disabled={updating} onChange={(event) => { if (event.target.value && event.target.value <= today) { setSelectedDate(event.target.value) } }} /><Button size="small" disabled={updating || selectedDate === today} onClick={() => setSelectedDate(today)}>今天</Button><Button size="small" disabled={updating || selectedDate === shanghaiYesterday()} onClick={() => setSelectedDate(shanghaiYesterday())}>昨天</Button></div>
+      </div>
+      <div className="dashboard-update-control">{updating && activeProgress ? <span className="dashboard-update-progress">{activeProgress.message} · {formatElapsed(activeProgress.elapsedMs)}</span> : null}{updating ? <Button danger onClick={() => void cancelUpdate()}>取消更新</Button> : <Button type="primary" disabled={isPreview || filteredAccounts.length === 0} onClick={() => void updateSelectedStores()}>{updateButtonLabel}</Button>}</div>
     </div>
-    <div className="dashboard-update-control">{updating && activeProgress ? <span className="dashboard-update-progress">{activeProgress.message} · {formatElapsed(activeProgress.elapsedMs)}</span> : null}{updating ? <Button danger onClick={() => void cancelUpdate()}>取消更新</Button> : <Button type="primary" disabled={isPreview || filteredAccounts.length === 0} onClick={() => void updateSelectedStores()}>{updateButtonLabel}</Button>}</div>
-  </div>
+    {updateResult ? <Alert className="dashboard-update-result" type={updateResult.type} showIcon closable message={updateResult.title} description={updateResult.description} onClose={() => setUpdateResult(null)} /> : null}
+  </>
 
   if (isPreview) return <>{toolbar}<DemoDashboard /></>
   if (loading) return <>{toolbar}<div className="empty-state"><h2>正在读取 {selectedDate} 仪表盘数据…</h2><p>数据仅从本地 Report Dataset 加载。</p></div></>
@@ -706,20 +756,39 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
   if (!dataset || dataset.meta.data_status === 'empty') return <>{toolbar}<div className="empty-state"><h2>{filterLabel}尚无 {selectedDate} 的采集数据</h2><p>点击“{updateButtonLabel}”采集该自然日数据；今天的数据可重复刷新。</p></div></>
 
   const summary = dataset.summary
+  const refundAmt = nullableNumeric(summary['refund_amt'])
+  const refundReportedShopCount = nullableNumeric(summary['refund_reported_shop_count']) ?? (refundAmt === null ? 0 : selectedShopIds.length)
+  const refundMissingShopCount = nullableNumeric(summary['refund_missing_shop_count']) ?? Math.max(0, selectedShopIds.length - refundReportedShopCount)
+  const refundCoverage = refundMissingShopCount > 0 ? ` · 覆盖 ${refundReportedShopCount}/${refundReportedShopCount + refundMissingShopCount} 家` : ''
+  const shopOverviewRows = dataset.sections.shop_overview ?? [{
+    shop_id: dataset.filters.shopIds[0] ?? null,
+    shop_name: dataset.meta.shop_name || filterLabel,
+    platform: dataset.filters.platforms[0] ?? null,
+    biz_date: dataset.meta.biz_date,
+    pay_amt: summary['pay_amt'] ?? null,
+    visitor_count: summary['visitor_count'] ?? null,
+    pay_rate: summary['pay_rate'] ?? null,
+    refund_amt: summary['refund_amt'] ?? null,
+    ad_spend: summary['ad_spend'] ?? null,
+    data_status: dataset.quality.status,
+    warning_count: dataset.quality.warning_count,
+    data_finality: dataset.meta.data_finality ?? null
+  }]
   const trendOption = reportTrendOption(dataset)
   return <>
     {toolbar}
-    <section className="metric-grid" aria-label={`${dateLabel}核心经营指标`}>
+    <section className="metric-grid dashboard-metric-grid" aria-label={`${dateLabel}核心经营指标`}>
       <MetricCard label={`${dateLabel}支付金额`} value={currency(summary['pay_amt'])} change="生意参谋" tone="accent" />
+      <MetricCard label="支付子订单数" value={integer(summary['pay_order_count'])} change={`${dateLabel}各店铺合计`} />
       <MetricCard label="访客数" value={integer(summary['visitor_count'])} change={`${dateLabel}自然日`} />
       <MetricCard label="支付转化率" value={percent(summary['pay_rate'])} change="支付买家 / 访客" />
       <MetricCard label="客单价" value={currency(summary['customer_unit_price'])} change="支付金额 / 买家" />
-      <MetricCard label="成功退款金额" value={currency(summary['refund_amt'])} change={`退款影响率 ${percent(summary['refund_rate'])}`} tone={numeric(summary['refund_amt']) > 0 ? 'danger' : 'success'} />
+      <MetricCard label={refundMissingShopCount > 0 ? '已知成功退款金额' : '成功退款金额'} value={currency(refundAmt)} change={`退款影响率 ${percent(summary['refund_rate'])}${refundCoverage}`} tone={numeric(refundAmt) > 0 ? 'danger' : 'success'} />
       <MetricCard label="广告消耗" value={currency(summary['ad_spend'])} change={`整体 ROI ${decimal(summary['ad_roi'])}`} tone="danger" />
     </section>
-    <section className="chart-grid primary-grid">
+    <section className="chart-grid primary-grid dashboard-overview-grid">
       <Panel title={`${dateLabel}经营数据`} subtitle={`${dataset.meta.biz_date} · 支付、退款与广告消耗`} className="wide-panel"><EChart option={trendOption} height={280} ariaLabel="支付、退款与广告消耗图" /></Panel>
-      <Panel title="数据提醒" subtitle={`${dataset.quality.warning_count} 项覆盖说明`}><div className="dashboard-alert-list">{dataset.sections.alerts.map((row, index) => <div className="dashboard-alert-item" key={`${String(row['title'])}-${index}`}><strong>{String(row['title'] ?? '提醒')}</strong><span>{String(row['detail'] ?? '')}</span></div>)}</div></Panel>
+      <Panel title="店铺概况" subtitle={`${selectedDate} · ${shopOverviewRows.length} 个店铺`} className="shop-overview-panel"><ShopOverviewList rows={shopOverviewRows} /></Panel>
     </section>
     <section className="chart-grid secondary-grid">
       <Panel title="流量来源" subtitle="生意参谋来源 Top"><ReportTable rows={dataset.sections.channels} columns={[['source_name', '来源'], ['visitor_count', '访客'], ['page_view_count', '浏览'], ['pay_amt', '支付金额']]} /></Panel>
@@ -752,6 +821,19 @@ function ReportTable({ rows, columns }: { rows: Array<Record<string, string | nu
   return <div className="ranking-table-wrap"><table className="ranking-table"><thead><tr>{columns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map(([key]) => <td key={key} title={String(row[key] ?? '')}>{key.includes('amt') ? currency(row[key]) : String(row[key] ?? '—')}</td>)}</tr>)}</tbody></table></div>
 }
 
+function ShopOverviewList({ rows }: { rows: Array<Record<string, string | number | null>> }): React.JSX.Element {
+  if (rows.length === 0) return <div className="report-empty">所选范围暂无店铺数据</div>
+  return <div className="shop-overview-list">{rows.map((row, index) => <article className="shop-overview-card" key={`${String(row['shop_id'] ?? row['shop_name'])}-${index}`}>
+    <div className="shop-overview-heading"><strong>{String(row['shop_name'] ?? '未命名店铺')}</strong></div>
+    <div className="shop-overview-metrics">
+      <span>支付金额 <b>{currency(row['pay_amt'])}</b></span>
+      <span>访客数 <b>{nullableInteger(row['visitor_count'])}</b></span>
+      <span>退款金额 <b>{currency(row['refund_amt'])}</b></span>
+      <span>广告消耗 <b>{currency(row['ad_spend'])}</b></span>
+    </div>
+  </article>)}</div>
+}
+
 function reportTrendOption(dataset: ReportDataset): DashboardChartOption {
   const dates = dataset.trend.map((row) => String(row['date'] ?? ''))
   return {
@@ -761,15 +843,17 @@ function reportTrendOption(dataset: ReportDataset): DashboardChartOption {
     xAxis: { type: 'category' as const, data: dates, axisTick: { show: false } }, yAxis: { type: 'value' as const },
     series: [
       { name: '支付金额', type: 'bar' as const, data: dataset.trend.map((row) => numeric(row['pay_amt'])), itemStyle: { color: '#2383e2', borderRadius: [5, 5, 0, 0] } },
-      { name: '退款金额', type: 'line' as const, data: dataset.trend.map((row) => numeric(row['refund_amt'])), lineStyle: { width: 2, color: '#e0533d' }, itemStyle: { color: '#e0533d' } },
+      { name: '退款金额', type: 'line' as const, data: dataset.trend.map((row) => nullableNumeric(row['refund_amt'])), lineStyle: { width: 2, color: '#e0533d' }, itemStyle: { color: '#e0533d' } },
       { name: '广告消耗', type: 'line' as const, data: dataset.trend.map((row) => numeric(row['ad_spend'])), lineStyle: { width: 3, color: '#f0a43c' }, itemStyle: { color: '#f0a43c' } }
     ]
   }
 }
 
 function numeric(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? value : 0 }
+function nullableNumeric(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) ? value : null }
 function currency(value: unknown): string { return typeof value === 'number' && Number.isFinite(value) ? `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—' }
 function integer(value: unknown): string { return Math.round(numeric(value)).toLocaleString('zh-CN') }
+function nullableInteger(value: unknown): string { const number = nullableNumeric(value); return number === null ? '—' : Math.round(number).toLocaleString('zh-CN') }
 function decimal(value: unknown): string { return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '—' }
 function percent(value: unknown): string { if (typeof value !== 'number' || !Number.isFinite(value)) return '—'; return `${(Math.abs(value) <= 1 ? value * 100 : value).toFixed(2)}%` }
 function shanghaiYesterday(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 86_400_000)) }
@@ -1526,6 +1610,7 @@ function Icon({ name }: { name: IconName }): React.JSX.Element {
     help: <><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
     shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>,
     chart: <><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></>,
+    calculator: <><rect x="4" y="2.5" width="16" height="19" rx="2"/><path d="M7 6h10v4H7zM8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/></>,
     copy: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
     check: <><polyline points="20 6 9 17 4 12"/></>
   }

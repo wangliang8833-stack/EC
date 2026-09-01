@@ -14,20 +14,20 @@ function account(id: string, shopId: string, enabled = true, loginStatus: Accoun
 describe('DataUpdateService', () => {
   it('updates each enabled shop once in the background for the exact requested date', async () => {
     const accounts = [account('acc_a1', 'shop_a'), account('acc_a2', 'shop_a', true, 'need_human_login'), account('acc_b', 'shop_b'), account('acc_off', 'shop_off', false)]
-    const calls: Array<{ accountId: string; bizDate: string | undefined; background: boolean | undefined }> = []
+    const calls: Array<{ accountId: string; bizDate: string | undefined; background: boolean | undefined; forceRefresh: boolean | undefined }> = []
     const service = new DataUpdateService(
       { list: async () => accounts, updateLoginStatus: async () => accounts[0]! },
       { run: async (value, options) => {
-        calls.push({ accountId: value.account_id, bizDate: options?.bizDate, background: options?.background })
+        calls.push({ accountId: value.account_id, bizDate: options?.bizDate, background: options?.background, forceRefresh: options?.forceRefresh })
         return { status: value.shop_id === 'shop_b' ? 'ALREADY_COLLECTED' : 'SUCCESS', warning: null } as CollectionProbeResult
       } }
     )
 
-    const result = await service.run({ bizDate: '2026-08-27', platforms: ['tmall'], shopIds: ['shop_a', 'shop_b'] })
+    const result = await service.run({ bizDate: '2026-08-27', platforms: ['tmall'], shopIds: ['shop_a', 'shop_b'], forceRefresh: true })
 
     expect(calls).toEqual([
-      { accountId: 'acc_a1', bizDate: '2026-08-27', background: true },
-      { accountId: 'acc_b', bizDate: '2026-08-27', background: true }
+      { accountId: 'acc_a1', bizDate: '2026-08-27', background: true, forceRefresh: true },
+      { accountId: 'acc_b', bizDate: '2026-08-27', background: true, forceRefresh: true }
     ])
     expect(result).toMatchObject({ total: 2, updated: 1, skipped: 1, needLogin: 0, failed: 0, bizDate: '2026-08-27' })
   })

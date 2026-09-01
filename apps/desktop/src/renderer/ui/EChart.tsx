@@ -4,6 +4,7 @@ import {
   GraphicComponent,
   GridComponent,
   LegendComponent,
+  MarkLineComponent,
   TooltipComponent,
   type GraphicComponentOption,
   type GridComponentOption,
@@ -13,7 +14,7 @@ import {
 import { init, use, type ComposeOption } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 
-use([BarChart, LineChart, PieChart, GraphicComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+use([BarChart, LineChart, PieChart, GraphicComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent, CanvasRenderer])
 
 export type DashboardChartOption = ComposeOption<
   | BarSeriesOption

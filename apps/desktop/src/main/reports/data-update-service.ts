@@ -35,6 +35,7 @@ export class DataUpdateService {
         const runOptions: TmallProbeRunOptions = {
           bizDate: request.bizDate,
           background: true,
+          forceRefresh: request.forceRefresh === true,
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.onProgress ? { onProgress: options.onProgress } : {})
         }

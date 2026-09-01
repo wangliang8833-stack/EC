@@ -10,6 +10,8 @@ import type { PersistedStorageSettings, StorageSettingsRepository } from '../set
 import { DataUpdateService, selectEffectiveAccounts } from '../reports/data-update-service.js'
 import { ScheduledCollectionService } from '../automation/scheduled-collection-service.js'
 import { aggregateReports } from '../reports/report-aggregation.js'
+import { buildPromotionReport } from '../reports/promotion-report.js'
+import { loadPromotionDetails, mergePromotionDetailBundles } from '../reports/promotion-detail-loader.js'
 import { assertAccountCredentialInput, assertCreateAccountInput, assertDataUpdateRequest, assertReportQuery, assertSafeId, assertStorageDirectoryKind, assertUpdateAccountInput, assertUpdateStorageSettingsInput, assertWorkspaceBounds } from '../security/input-validation.js'
 import { IPC_CHANNELS } from './channels.js'
 
@@ -114,6 +116,11 @@ export function registerIpcHandlers(services: IpcServices): () => void {
     if (action !== 'back' && action !== 'forward' && action !== 'reload') throw new TypeError('Unsupported workspace navigation action')
     return services.browserProfiles.navigateWorkspace(leaseId, action)
   })
+  ipcMain.handle(IPC_CHANNELS.accountsWorkspaceShortcutOpen, (_event, leaseId: unknown, shortcut: unknown) => {
+    assertSafeId(leaseId, 'leaseId')
+    if (shortcut !== 'sycm' && shortcut !== 'wanxiang' && shortcut !== 'seller') throw new TypeError('Unsupported workspace shortcut')
+    return services.browserProfiles.openWorkspaceShortcut(leaseId, shortcut)
+  })
   ipcMain.handle(IPC_CHANNELS.accountsWorkspaceTabActivate, (_event, leaseId: unknown, tabId: unknown) => {
     assertSafeId(leaseId, 'leaseId')
     assertSafeId(tabId, 'tabId')
@@ -203,7 +210,17 @@ export function registerIpcHandlers(services: IpcServices): () => void {
         const report = await services.tmallProbe.getCompletedReport(account, query.dateEnd)
         if (report) reports.push(report)
       }
-      const aggregate = aggregateReports(query, new Set(query.shopIds).size, reports)
+      const shopRefs = accounts.map((account) => ({
+        shopId: account.shop_id,
+        shopName: account.shop_name,
+        platform: account.platform
+      }))
+      const promotionDetails = query.reportType === 'tmall_promotion_report'
+        ? mergePromotionDetailBundles(await Promise.all(accounts.map((account) => loadPromotionDetails(services.storage, account, query.dateEnd))))
+        : undefined
+      const aggregate = query.reportType === 'tmall_promotion_report'
+        ? buildPromotionReport(query, new Set(query.shopIds).size, reports, shopRefs, promotionDetails)
+        : aggregateReports(query, new Set(query.shopIds).size, reports, shopRefs)
       if (aggregate) return aggregate
     }
     return emptyReport(query)

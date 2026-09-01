@@ -60,7 +60,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     titleBarOverlay: process.platform === 'win32'
-      ? { color: '#080f1e', symbolColor: '#dfe8f6', height: 58 }
+      ? { color: '#29253b', symbolColor: '#dfe8f6', height: 58 }
       : false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),

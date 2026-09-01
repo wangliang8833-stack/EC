@@ -1,0 +1,64 @@
+.promotion-report-page { display: flex; flex-direction: column; gap: 14px; }
+.promotion-toolbar { padding: 11px 13px; display: flex; align-items: center; gap: 18px; border: 1px solid #e6e3dd; border-radius: 10px; background: #fff; }
+.promotion-toolbar > .ant-btn { margin-left: auto; }
+.promotion-filter, .promotion-date { display: flex; align-items: center; gap: 8px; }
+.promotion-filter label { flex: none; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.promotion-filter .ant-select { width: 230px; }
+.promotion-date input { height: 30px; padding: 0 9px; border: 1px solid #d9d7d2; border-radius: 6px; color: var(--text-primary); background: #fff; font: inherit; font-size: 12px; outline: none; }
+.promotion-alert { margin: 0; }
+.promotion-coverage { padding: 10px 13px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; border: 1px solid #eadfbf; border-radius: 9px; color: #6b5b36; background: #fffaf0; font-size: 11px; }
+.promotion-coverage strong { color: #4d4021; }
+.promotion-source { padding: 3px 7px; border-radius: 5px; font-weight: 650; }
+.promotion-source.real { color: #08704a; background: #e8f7f1; }
+.promotion-source.pending { color: #69717e; background: #edf0f3; }
+.promotion-switch { margin-bottom: 1px; }
+.promotion-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.promotion-kpi { min-height: 116px; padding: 15px 16px; display: flex; flex-direction: column; border: 1px solid #e6e3dd; border-radius: 12px; background: #fff; }
+.promotion-kpi > span { color: var(--text-secondary); font-size: 12px; }
+.promotion-kpi > strong { margin: 14px 0 7px; color: var(--text-primary); font-size: 25px; line-height: 1; font-weight: 680; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.promotion-kpi > small { margin-top: auto; color: var(--text-tertiary); font-size: 10px; }
+.promotion-kpi.accent > strong { color: var(--accent); }
+.promotion-kpi.danger > strong, .promotion-kpi.danger > small { color: var(--danger); }
+.promotion-kpi.muted > strong { color: #817b85; }
+.promotion-overview-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(330px, .75fr); gap: 14px; }
+.promotion-panel { min-width: 0; padding: 17px 18px; border: 1px solid #e6e3dd; border-radius: 12px; background: #fff; }
+.promotion-panel-head { min-height: 42px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.promotion-panel-head h2 { margin: 0; font-size: 14px; font-weight: 650; }
+.promotion-panel-head p { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }
+.promotion-coverage-list { display: grid; gap: 9px; }
+.promotion-coverage-row { padding: 10px 11px; display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; border: 1px solid #ede9e4; border-radius: 9px; background: #fcfbfa; }
+.promotion-coverage-row > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.promotion-coverage-row > div strong { font-size: 12px; }
+.promotion-coverage-row > div span { overflow: hidden; color: var(--text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.promotion-coverage-row > b { font-size: 11px; }
+.promotion-coverage-row > i { grid-column: 1 / -1; height: 5px; overflow: hidden; border-radius: 99px; background: #e9e6e2; }
+.promotion-coverage-row > i em { display: block; height: 100%; border-radius: inherit; background: #a9a4ad; }
+.promotion-coverage-row .tone-success { color: var(--success); }
+.promotion-coverage-row i .tone-success { background: var(--success); }
+.promotion-coverage-row .tone-warning { color: #b46b13; }
+.promotion-coverage-row i .tone-warning { background: #d68d2f; }
+.promotion-coverage-row .tone-muted { color: var(--text-tertiary); }
+.promotion-table-wrap { overflow-x: auto; }
+.promotion-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.promotion-table th { height: 40px; color: var(--text-tertiary); border-bottom: 1px solid #e8e5df; text-align: left; font-weight: 550; white-space: nowrap; }
+.promotion-table td { height: 46px; padding-right: 16px; color: var(--text-secondary); border-bottom: 1px solid #f0ede9; white-space: nowrap; }
+.promotion-table td.strong { color: var(--text-primary); font-weight: 600; }
+.promotion-table td.number { text-align: right; font-variant-numeric: tabular-nums; }
+.promotion-quality-layout { display: grid; grid-template-columns: 1.2fr .8fr; gap: 14px; }
+.promotion-quality-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.promotion-quality-card { padding: 13px; display: flex; flex-direction: column; border: 1px solid #ebe7e2; border-radius: 9px; background: #fcfbfa; }
+.promotion-quality-card span, .promotion-quality-card small { color: var(--text-tertiary); font-size: 10px; }
+.promotion-quality-card strong { margin: 8px 0 4px; font-size: 20px; }
+.promotion-quality-card .tone-success { color: var(--success); }
+.promotion-quality-card .tone-danger { color: var(--danger); }
+.promotion-quality-card .tone-info { color: var(--accent); }
+.promotion-quality-card .tone-muted { color: var(--text-tertiary); }
+.promotion-warning-list { display: grid; gap: 8px; }
+.promotion-warning-list > div { padding: 9px 10px; display: grid; grid-template-columns: 24px 1fr; align-items: start; gap: 8px; border-radius: 8px; background: #fbf7ed; }
+.promotion-warning-list span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: #9a650f; background: #fff0ca; font-size: 10px; font-weight: 700; }
+.promotion-warning-list p { margin: 1px 0 0; color: #6f6659; font-size: 11px; line-height: 1.55; }
+.promotion-empty { min-height: 340px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.promotion-empty h2 { margin: 0; font-size: 15px; }
+.promotion-empty p { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; }
+@media (max-width: 1240px) { .promotion-kpis { grid-template-columns: repeat(3, 1fr); } .promotion-overview-grid, .promotion-quality-layout { grid-template-columns: 1fr; } }
+@media (max-width: 1040px) { .promotion-toolbar { align-items: stretch; flex-wrap: wrap; } .promotion-toolbar > .ant-btn { margin-left: 0; } .promotion-quality-grid { grid-template-columns: repeat(2, 1fr); } }

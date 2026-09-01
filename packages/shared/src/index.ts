@@ -289,6 +289,7 @@ export interface DataUpdateRequest {
   bizDate: string
   platforms: string[]
   shopIds: string[]
+  forceRefresh?: boolean
 }
 
 export type DataUpdateShopStatus = 'SUCCESS' | 'ALREADY_COLLECTED' | 'NEED_HUMAN_LOGIN' | 'FAILED'
@@ -329,6 +330,12 @@ export interface ReportDataset {
     collection_status: 'completed' | 'not_collected'
     normalizer_version?: string
     data_finality?: 'realtime' | 'final'
+    source_validation?: {
+      status: 'passed' | 'partial'
+      validated_at: string
+      critical_endpoint_count: number
+      warning_count: number
+    }
   }
   summary: Record<string, string | number | null>
   trend: Array<Record<string, string | number | null>>
@@ -339,6 +346,15 @@ export interface ReportDataset {
     campaigns: Array<Record<string, string | number | null>>
     alerts: Array<Record<string, string | number | null>>
     service: Array<Record<string, string | number | null>>
+    shop_overview?: Array<Record<string, string | number | null>>
+    promotion_accounts?: Array<Record<string, string | number | null>>
+    promotion_campaigns?: Array<Record<string, string | number | null>>
+    promotion_items?: Array<Record<string, string | number | null>>
+    promotion_keywords?: Array<Record<string, string | number | null>>
+    promotion_crowds?: Array<Record<string, string | number | null>>
+    promotion_creatives?: Array<Record<string, string | number | null>>
+    promotion_regions?: Array<Record<string, string | number | null>>
+    promotion_hourly?: Array<Record<string, string | number | null>>
   }
   quality: {
     complete_shop_count: number
@@ -397,6 +413,7 @@ export interface WorkspaceBounds {
 }
 
 export type WorkspaceNavigationAction = 'back' | 'forward' | 'reload'
+export type TmallWorkspaceShortcut = 'sycm' | 'wanxiang' | 'seller'
 
 export interface WorkspaceTabSummary {
   tabId: string
@@ -427,6 +444,7 @@ export interface DesktopApi {
     layoutWorkspace(leaseId: string, bounds: WorkspaceBounds): Promise<void>
     closeWorkspace(leaseId?: string): Promise<void>
     navigateWorkspace(leaseId: string, action: WorkspaceNavigationAction): Promise<WorkspaceBrowserState>
+    openWorkspaceShortcut(leaseId: string, shortcut: TmallWorkspaceShortcut): Promise<WorkspaceBrowserState>
     activateWorkspaceTab(leaseId: string, tabId: string): Promise<WorkspaceBrowserState>
     closeWorkspaceTab(leaseId: string, tabId: string): Promise<WorkspaceBrowserState>
     checkLogin(accountId: string): Promise<AccountLoginCheckResult>

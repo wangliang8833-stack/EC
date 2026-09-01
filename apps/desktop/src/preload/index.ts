@@ -13,6 +13,7 @@ const desktopApi: DesktopApi = {
     layoutWorkspace: (leaseId, bounds) => ipcRenderer.invoke(IPC_CHANNELS.accountsWorkspaceLayout, leaseId, bounds),
     closeWorkspace: (leaseId) => ipcRenderer.invoke(IPC_CHANNELS.accountsWorkspaceClose, leaseId),
     navigateWorkspace: (leaseId, action) => ipcRenderer.invoke(IPC_CHANNELS.accountsWorkspaceNavigate, leaseId, action),
+    openWorkspaceShortcut: (leaseId, shortcut) => ipcRenderer.invoke(IPC_CHANNELS.accountsWorkspaceShortcutOpen, leaseId, shortcut),
     activateWorkspaceTab: (leaseId, tabId) => ipcRenderer.invoke(IPC_CHANNELS.accountsWorkspaceTabActivate, leaseId, tabId),
     closeWorkspaceTab: (leaseId, tabId) => ipcRenderer.invoke(IPC_CHANNELS.accountsWorkspaceTabClose, leaseId, tabId),
     checkLogin: (accountId) => ipcRenderer.invoke(IPC_CHANNELS.accountsCheckLogin, accountId),

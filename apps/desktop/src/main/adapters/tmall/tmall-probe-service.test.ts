@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AccountConfig, ReportDataset } from '@ecommerce/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { BrowserProfileManager, TmallCollectionOptions } from '../../browser/browser-profile-manager.js'
+import type { BrowserProfileManager, TmallCollectionOptions, TmallDailySnapshot } from '../../browser/browser-profile-manager.js'
 import { JsonStorageService } from '../../storage/json-storage-service.js'
 import { CollectionTimeoutError } from './collection-execution.js'
 import { TMALL_NORMALIZER_VERSION } from './tmall-daily-normalizer.js'
@@ -35,7 +35,99 @@ const account: AccountConfig = {
   updated_at: '2026-08-27T08:00:00.000Z'
 }
 
+function validSnapshot(bizDate: string, payAmt = 20, visitors = 2): TmallDailySnapshot {
+  return {
+    bizDate,
+    capturedAt: '2026-09-01T00:30:00.000Z',
+    pages: [
+      { key: 'store', sourcePage: '首页', sourceUrl: 'https://sycm.taobao.com/portal/home.htm', endpoints: {
+        '/portal/live/new/index/overview/v3.json': { ok: true, status: 200, body: { code: 0, data: { yestday: { payAmt, uv: visitors, payByrCnt: payAmt > 0 ? 1 : 0 } } } }
+      } },
+      { key: 'trade', sourcePage: '交易', sourceUrl: 'https://sycm.taobao.com/ipoll/index.htm', endpoints: {
+        '/ipoll/live/yesterday/getYesterdayTrade.json': { ok: true, status: 200, body: { code: 0, data: { payAmt: payAmt * 100, payOrdCnt: payAmt > 0 ? 1 : 0, payByrCnt: payAmt > 0 ? 1 : 0 } } },
+        '/ipoll/live/yesterday/getYesterdayFlow.json': { ok: true, status: 200, body: { code: 0, data: { uv: visitors } } }
+      } },
+      { key: 'flow', sourcePage: '流量', sourceUrl: 'https://sycm.taobao.com/flow/monitor/overview', endpoints: {
+        '/flow/new/guide/trend/overview.json': { ok: true, status: 200, body: { code: 0, data: { payAmt, uv: visitors } } }
+      } },
+      { key: 'item', sourcePage: '商品', sourceUrl: 'https://sycm.taobao.com/cc/item_rank', endpoints: {} },
+      { key: 'service', sourcePage: '客服', sourceUrl: 'https://sycm.taobao.com/qos/service/core_monitor/new', endpoints: {
+        '/csp/api/core/monitor/overview/list': { ok: true, status: 200, body: { code: 200, data: [] } }
+      } }
+    ]
+  }
+}
+
 describe('TmallProbeService', () => {
+  it('rejects HTTP-200 login business errors without writing a completed report', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tmall-probe-login-error-'))
+    roots.push(root)
+    const storage = new JsonStorageService(root)
+    await storage.initialize()
+    const loginError = { ok: true, status: 200, body: { code: 5810, msg: 'You must login system first.' } }
+    const browser = {
+      collectTmallDaily: async (_account: AccountConfig, bizDate: string): Promise<TmallDailySnapshot> => ({
+        bizDate, capturedAt: '2026-09-01T00:30:00.000Z', pages: [
+          { key: 'store', sourcePage: '首页', sourceUrl: 'https://sycm.taobao.com/custom/login.htm', endpoints: { '/portal/live/new/index/overview/v3.json': loginError } },
+          { key: 'trade', sourcePage: '交易', sourceUrl: 'https://sycm.taobao.com/custom/login.htm', endpoints: { '/ipoll/live/yesterday/getYesterdayTrade.json': loginError } },
+          { key: 'flow', sourcePage: '流量', sourceUrl: 'https://sycm.taobao.com/custom/login.htm', endpoints: { '/flow/new/guide/trend/overview.json': loginError } },
+          { key: 'item', sourcePage: '商品', sourceUrl: 'https://sycm.taobao.com/custom/login.htm', endpoints: { '/cc/item/view/top.json': loginError } },
+          { key: 'service', sourcePage: '客服', sourceUrl: 'https://sycm.taobao.com/custom/login.htm', endpoints: {} }
+        ]
+      })
+    } as unknown as BrowserProfileManager
+
+    const result = await new TmallProbeService(browser, storage).run(account, { bizDate: '2026-08-31' })
+
+    expect(result.status).toBe('NEED_HUMAN_LOGIN')
+    expect(result.warning).toContain('登录')
+    await expect(readFile(join(root, 'data', 'report-datasets', 'tmall', account.shop_id, '2026-08-31.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('accepts a business-successful snapshot whose core metrics are legitimately zero', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tmall-probe-zero-'))
+    roots.push(root)
+    const storage = new JsonStorageService(root)
+    await storage.initialize()
+    const browser = { collectTmallDaily: async (_account: AccountConfig, bizDate: string) => validSnapshot(bizDate, 0, 0) } as unknown as BrowserProfileManager
+
+    const result = await new TmallProbeService(browser, storage).run(account, { bizDate: '2026-08-31' })
+    const report = await storage.readJson<ReportDataset>(result.relativePath!)
+
+    expect(result.status).toBe('SUCCESS')
+    expect(report.summary).toMatchObject({ pay_amt: 0, visitor_count: 0, pay_order_count: 0 })
+  })
+
+  it('does not skip a historical cache whose Raw sources contain a login error', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tmall-probe-invalid-cache-'))
+    roots.push(root)
+    const storage = new JsonStorageService(root)
+    await storage.initialize()
+    let collectionCalls = 0
+    const browser = {
+      collectTmallDaily: async (_account: AccountConfig, bizDate: string) => {
+        collectionCalls += 1
+        return validSnapshot(bizDate, collectionCalls === 1 ? 20 : 35, 3)
+      }
+    } as unknown as BrowserProfileManager
+    const service = new TmallProbeService(browser, storage)
+    const first = await service.run(account, { bizDate: '2026-08-31' })
+    const report = await storage.readJson<ReportDataset>(first.relativePath!)
+    for (const path of report.source_paths.filter((value) => value.includes('/raw/'))) {
+      const raw = await storage.readJson<Record<string, unknown>>(path)
+      const source = raw['source'] as Record<string, unknown>
+      source['page_url'] = 'https://sycm.taobao.com/custom/login.htm'
+      await storage.writeJson(path, raw)
+    }
+
+    const refreshed = await service.run(account, { bizDate: '2026-08-31' })
+    const refreshedReport = await storage.readJson<ReportDataset>(refreshed.relativePath!)
+
+    expect(refreshed.status).toBe('SUCCESS')
+    expect(collectionCalls).toBe(2)
+    expect(refreshedReport.summary['pay_amt']).toBe(35)
+  })
+
   it('refreshes a same-day realtime snapshot after the business date has closed', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-28T05:30:00.000Z'))

@@ -8,6 +8,7 @@ export const IPC_CHANNELS = {
   accountsWorkspaceLayout: 'accounts:workspace:layout',
   accountsWorkspaceClose: 'accounts:workspace:close',
   accountsWorkspaceNavigate: 'accounts:workspace:navigate',
+  accountsWorkspaceShortcutOpen: 'accounts:workspace:shortcut-open',
   accountsWorkspaceTabActivate: 'accounts:workspace:tab-activate',
   accountsWorkspaceTabClose: 'accounts:workspace:tab-close',
   accountsWorkspaceStateChanged: 'accounts:workspace:state-changed',

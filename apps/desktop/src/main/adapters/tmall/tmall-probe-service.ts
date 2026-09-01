@@ -4,6 +4,7 @@ import type { BrowserProfileManager, TmallCapturedPage, TmallDailySnapshot } fro
 import type { JsonStorageService } from '../../storage/json-storage-service.js'
 import { CollectionCancelledError, runBoundedOperation } from './collection-execution.js'
 import { normalizeTmallDaily, TMALL_NORMALIZER_VERSION } from './tmall-daily-normalizer.js'
+import { validateTmallPage, validateTmallSnapshot, type TmallSourceValidation } from './tmall-source-validation.js'
 
 const DAILY_WARNING = '已采集生意参谋所选日期的经营、成功退款汇总与 Top 数据；订单/退款明细、广告计划明细和结算数据尚未接入，数据质量标记为部分完整。'
 const TOTAL_COLLECTION_TIMEOUT_MS = 180_000
@@ -12,6 +13,7 @@ export interface TmallProbeRunOptions {
   runId?: string
   bizDate?: string
   background?: boolean
+  forceRefresh?: boolean
   signal?: AbortSignal | undefined
   onProgress?: (progress: CollectionProgress) => void | Promise<void>
 }
@@ -94,7 +96,7 @@ export class TmallProbeService {
 
     await emitProgress('precheck', `校验目标日期 ${bizDate} 的完成标记`)
     const reportPath = ['data/report-datasets', 'tmall', account.shop_id, `${bizDate}.json`].join('/')
-    const existing = refreshableToday ? null : await this.readCompletedReport(reportPath, account, bizDate)
+    const existing = refreshableToday || options.forceRefresh ? null : await this.readCompletedReport(reportPath, account, bizDate)
     if (existing?.meta.data_finality === 'final') {
       await emitProgress('completed', `目标日期 ${bizDate} 已完整采集，本次未重复执行`)
       return alreadyCollected(account, bizDate, reportPath, existing, runId)
@@ -140,12 +142,21 @@ export class TmallProbeService {
       )
       if (!snapshot) {
         await emitProgress('failed', '页面跳转后登录状态失效，需要重新登录')
-        return needLogin(account, runId)
+        return needLogin(account, runId, bizDate)
       }
       for (const [index, page] of snapshot.pages.entries()) await persistRawPage(page, index, snapshot.capturedAt)
 
       await emitProgress('normalizing', '正在校验并标准化已抓取的数据')
+      const sourceValidation = validateTmallSnapshot(snapshot)
+      if (sourceValidation.loginRequired) {
+        const warning = sourceValidation.warnings.join('；')
+        await emitProgress('failed', warning)
+        this.logger.warn({ event: 'collection_source_rejected', runId, accountId: account.account_id, bizDate, reason: 'login_required' }, warning)
+        return needLogin(account, runId, bizDate, warning)
+      }
+      if (sourceValidation.status === 'failed') throw new Error(sourceValidation.warnings.join('；'))
       const normalized = normalizeTmallDaily(snapshot, account)
+      attachSourceValidation(normalized.report, sourceValidation)
       const normalizedPaths: string[] = []
       for (const value of normalized.datasets) {
         const path = ['data/normalized', 'tmall', account.shop_id, account.account_id, year, month, day, `${value.dataset}.json`].join('/')
@@ -190,36 +201,33 @@ export class TmallProbeService {
     try {
       const report = await this.storage.readJson<ReportDataset>(relativePath)
       if (!isCompletedReport(report, account, bizDate)) return null
+      const snapshot = await this.readStoredRawSnapshot(report, account, bizDate)
+      if (!snapshot) return null
+      const sourceValidation = validateTmallSnapshot(snapshot)
+      if (sourceValidation.status === 'failed') {
+        this.logger.warn({
+          event: 'cached_report_rejected', accountId: account.account_id, shopId: account.shop_id, bizDate,
+          reason: sourceValidation.loginRequired ? 'login_required' : 'source_validation_failed'
+        }, sourceValidation.warnings.join('；'))
+        return null
+      }
       const normalizedPathCount = report.source_paths.filter((path) => path.includes('/normalized/')).length
       if (report.meta.normalizer_version === TMALL_NORMALIZER_VERSION && report.quality.dataset_count >= 7 && normalizedPathCount >= 7) return report
-      return await this.rebuildLegacyReport(relativePath, report, account, bizDate)
+      return await this.rebuildLegacyReport(relativePath, report, account, bizDate, snapshot, sourceValidation)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return null
       throw error
     }
   }
 
-  private async rebuildLegacyReport(relativePath: string, legacyReport: ReportDataset, account: AccountConfig, bizDate: string): Promise<ReportDataset> {
+  private async rebuildLegacyReport(relativePath: string, legacyReport: ReportDataset, account: AccountConfig, bizDate: string, existingSnapshot?: TmallDailySnapshot, existingValidation?: TmallSourceValidation): Promise<ReportDataset> {
+    const snapshot = existingSnapshot ?? await this.readStoredRawSnapshot(legacyReport, account, bizDate)
+    if (!snapshot) throw new Error(`无法从 Raw 重建 ${bizDate} 报表：需要 5 个有效页面`)
+    const sourceValidation = existingValidation ?? validateTmallSnapshot(snapshot)
+    if (sourceValidation.status === 'failed') throw new Error(sourceValidation.warnings.join('；'))
     const rawPaths = legacyReport.source_paths.filter((path) => path.includes('/raw/'))
-    const pages: TmallCapturedPage[] = []
-    let capturedAt = legacyReport.generated_at
-    for (const rawPath of rawPaths) {
-      const raw = await this.storage.readJson<StoredRawEnvelope>(rawPath)
-      const pageKey = pageKeyFromDataType(raw.data_type)
-      if (!pageKey || raw.account_id !== account.account_id || raw.shop_id !== account.shop_id || raw.data_date !== bizDate || !isRecord(raw.payload)) continue
-      pages.push({
-        key: pageKey,
-        sourcePage: raw.source?.page_title ?? pageLabel(pageKey),
-        sourceUrl: raw.source?.page_url ?? '',
-        endpoints: raw.payload
-      })
-      if (raw.collected_at > capturedAt) capturedAt = raw.collected_at
-    }
-    const uniquePages = new Map(pages.map((page) => [page.key, page]))
-    if (uniquePages.size !== 5) throw new Error(`无法从 Raw 重建 ${bizDate} 报表：需要 5 个页面，实际 ${uniquePages.size} 个`)
-
-    const snapshot: TmallDailySnapshot = { bizDate, capturedAt, pages: [...uniquePages.values()] }
     const normalized = normalizeTmallDaily(snapshot, account)
+    attachSourceValidation(normalized.report, sourceValidation)
     const [year = '', month = '', day = ''] = bizDate.split('-')
     const normalizedPaths: string[] = []
     for (const value of normalized.datasets) {
@@ -239,15 +247,38 @@ export class TmallProbeService {
     }, 'legacy Tmall report rebuilt from existing Raw files')
     return normalized.report
   }
+
+  private async readStoredRawSnapshot(report: ReportDataset, account: AccountConfig, bizDate: string): Promise<TmallDailySnapshot | null> {
+    const rawPaths = report.source_paths.filter((path) => path.includes('/raw/'))
+    const pages: TmallCapturedPage[] = []
+    let capturedAt = report.generated_at
+    for (const rawPath of rawPaths) {
+      const raw = await this.storage.readJson<StoredRawEnvelope>(rawPath)
+      const pageKey = pageKeyFromDataType(raw.data_type)
+      if (!pageKey || raw.account_id !== account.account_id || raw.shop_id !== account.shop_id || raw.data_date !== bizDate || !isRecord(raw.payload)) continue
+      pages.push({
+        key: pageKey,
+        sourcePage: raw.source?.page_title ?? pageLabel(pageKey),
+        sourceUrl: raw.source?.page_url ?? '',
+        endpoints: raw.payload
+      })
+      if (raw.collected_at > capturedAt) capturedAt = raw.collected_at
+    }
+    const uniquePages = new Map(pages.map((page) => [page.key, page]))
+    if (uniquePages.size !== 5) return null
+    return { bizDate, capturedAt, pages: [...uniquePages.values()] }
+  }
 }
 
 function rawEnvelope(account: AccountConfig, snapshot: TmallDailySnapshot, page: TmallCapturedPage, runId: string): Record<string, unknown> {
+  const sourceValidation = validateTmallPage(page)
+  const validationWarnings = [...sourceValidation.warnings, DAILY_WARNING, 'Raw 网络响应已移除凭据、Cookie、Token、授权头及跟踪标识。']
   return {
     schema_version: '1.0.0', record_type: 'raw_collection', run_id: runId, platform: 'tmall', shop_id: account.shop_id,
     account_id: account.account_id, data_type: `${page.key}_daily`, data_date: snapshot.bizDate, timezone: 'Asia/Shanghai',
     collection_method: 'network_json', adapter_version: '0.3.0', source: { page_url: sanitizeUrl(page.sourceUrl), page_title: page.sourcePage },
     collected_at: snapshot.capturedAt, payload: sanitizeRaw(page.endpoints),
-    validation: { status: 'passed_with_warning', warnings: [DAILY_WARNING, 'Raw 网络响应已移除凭据、Cookie、Token、授权头及跟踪标识。'] },
+    validation: { status: sourceValidation.status === 'failed' ? 'failed' : validationWarnings.length > 0 ? 'passed_with_warning' : 'passed', warnings: validationWarnings },
     integrity: { sha256: null, previous_run_id: null }
   }
 }
@@ -297,11 +328,25 @@ function sanitizeUrl(value: string): string {
   try { const url = new URL(value); return `${url.origin}${url.pathname}` } catch { return value.split(/[?#]/u, 1)[0] ?? '' }
 }
 
-function needLogin(account: AccountConfig, runId: string): CollectionProbeResult {
+function needLogin(account: AccountConfig, runId: string, bizDate: string, warning = '未检测到已登录的天猫工作台，请先打开独立环境并完成人工登录。'): CollectionProbeResult {
   return {
     runId, accountId: account.account_id, status: 'NEED_HUMAN_LOGIN', pageUrl: '', pageTitle: '', tableCount: 0, rowCount: 0,
-    relativePath: null, warning: '未检测到已登录的天猫工作台，请先打开独立环境并完成人工登录。', bizDate: shanghaiYesterday(),
+    relativePath: null, warning, bizDate,
     datasetCount: 0, dashboardRelativePath: null, normalizedPaths: [], qualityStatus: 'partial'
+  }
+}
+
+function attachSourceValidation(report: ReportDataset, validation: TmallSourceValidation): void {
+  if (validation.status === 'failed') throw new Error('不能把来源校验失败的数据标记为正式报表')
+  report.meta.source_validation = {
+    status: validation.status,
+    validated_at: new Date().toISOString(),
+    critical_endpoint_count: validation.criticalEndpointCount,
+    warning_count: validation.warningCount
+  }
+  if (validation.warnings.length > 0) {
+    report.quality.warnings = [...new Set([...validation.warnings, ...report.quality.warnings])]
+    report.quality.warning_count = report.quality.warnings.length
   }
 }
 

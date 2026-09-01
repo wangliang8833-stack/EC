@@ -8,7 +8,8 @@ import type {
   WorkspaceBounds,
   WorkspaceBrowserState,
   WorkspaceNavigationAction,
-  WorkspaceTabSummary
+  WorkspaceTabSummary,
+  TmallWorkspaceShortcut
 } from '@ecommerce/shared'
 import type { AccountCredentialVault } from '../accounts/account-credential-vault.js'
 import { getPlatformPreset } from '../accounts/platform-presets.js'
@@ -19,6 +20,7 @@ import { flushPersistentSession } from './session-persistence.js'
 import { isAllowedCookieDomain, SessionCookieVault } from './session-cookie-vault.js'
 import { OpeningWorkspaceLease, ownsWorkspaceLease } from './workspace-lease.js'
 import { canOpenWorkspacePopup, nextWorkspaceTabId } from './workspace-tab-policy.js'
+import { isWanxiangLoginUrl, resolveWorkspaceShortcut } from './workspace-shortcuts.js'
 import { runBoundedOperation, runCollectionSequence, type CollectionSequenceProgressPhase } from '../adapters/tmall/collection-execution.js'
 
 export interface LoginInspection {
@@ -67,6 +69,7 @@ interface BrowserWorkspaceTab {
   view: WebContentsView
   contents: WebContents
   statusHandler: (event: IpcMainEvent, status: unknown) => void
+  shortcut: TmallWorkspaceShortcut | null
 }
 
 interface BrowserWorkspace {
@@ -177,6 +180,25 @@ export class BrowserProfileManager {
     return this.publishWorkspaceState(workspace)
   }
 
+  async openWorkspaceShortcut(leaseId: string, shortcut: TmallWorkspaceShortcut): Promise<WorkspaceBrowserState> {
+    const workspace = this.requireWorkspace(leaseId)
+    const target = resolveWorkspaceShortcut(workspace.account.platform, shortcut)
+    let tab = workspace.tabs.find((candidate) => candidate.shortcut === shortcut && !candidate.contents.isDestroyed())
+    if (!tab) {
+      if (!canOpenWorkspacePopup(target.url, this.allowedWorkspaceHosts(workspace), workspace.tabs.length)) throw new Error('无法打开快捷入口：标签页数量已达上限或入口地址不受信任')
+      tab = this.createWorkspaceTab(workspace, target.title, shortcut)
+    }
+    workspace.activeTabId = tab.tabId
+    this.attachActiveTab(workspace)
+    this.publishWorkspaceState(workspace)
+    await tab.contents.loadURL(target.url)
+    if (shortcut === 'wanxiang' && isWanxiangLoginUrl(tab.contents.getURL())) {
+      const entered = await clickWanxiangBackendEntry(tab.contents)
+      if (!entered) throw new Error('万相台登录页已打开，但未找到“进入后台”按钮，请在页面中手动点击进入。')
+    }
+    return this.publishWorkspaceState(workspace)
+  }
+
   activateWorkspaceTab(leaseId: string, tabId: string): WorkspaceBrowserState {
     const workspace = this.requireWorkspace(leaseId)
     const tab = workspace.tabs.find((candidate) => candidate.tabId === tabId && !candidate.contents.isDestroyed())
@@ -250,11 +272,11 @@ export class BrowserProfileManager {
     if (!contents) return { status: 'need_human_login', currentUrl: null }
     const currentUrl = contents.getURL()
     try {
-      const { hostname } = new URL(currentUrl)
+      new URL(currentUrl)
       const preset = getPlatformPreset(account.platform)
-      const authenticated = preset.authenticatedHosts.includes(hostname)
+      const authenticated = isAuthenticatedUrl(currentUrl, preset.authenticatedHosts)
       const observed = this.workspace?.accountId === account.account_id ? this.workspace.observedStatus : null
-      return { status: authenticated ? 'authenticated' : observed ?? 'need_human_login', currentUrl: sanitizeDisplayUrl(currentUrl) }
+      return { status: authenticated ? 'authenticated' : observed && observed !== 'authenticated' ? observed : 'need_human_login', currentUrl: sanitizeDisplayUrl(currentUrl) }
     } catch {
       return { status: 'need_human_login', currentUrl: currentUrl || null }
     }
@@ -272,7 +294,7 @@ export class BrowserProfileManager {
     } catch {
       // The controlled tab may still be on its initial blank document.
     }
-    if (!preset.authenticatedHosts.includes(currentHost)) return null
+    if (!isAuthenticatedUrl(currentUrl, preset.authenticatedHosts)) return null
     if (currentHost !== new URL(preset.collectionProbeUrl).hostname) await contents.loadURL(preset.collectionProbeUrl)
 
     const finalUrl = contents.getURL()
@@ -282,7 +304,7 @@ export class BrowserProfileManager {
     } catch {
       return null
     }
-    if (!preset.authenticatedHosts.includes(finalHost)) return null
+    if (!isAuthenticatedUrl(finalUrl, preset.authenticatedHosts)) return null
 
     const counts = (await contents.executeJavaScript(
       `(() => ({
@@ -308,13 +330,7 @@ export class BrowserProfileManager {
     const contents = this.accountWebContents(account.account_id)
     if (!contents) return null
     const preset = getPlatformPreset(account.platform)
-    let currentHost = ''
-    try {
-      currentHost = new URL(contents.getURL()).hostname
-    } catch {
-      return null
-    }
-    if (!preset.authenticatedHosts.includes(currentHost)) return null
+    if (!isAuthenticatedUrl(contents.getURL(), preset.authenticatedHosts)) return null
 
     const snapshot = await this.collectTmallDailyWithContents(account, bizDate, contents, options)
     await this.persistAccountEnvironment(account, this.requireWorkspaceForAccount(account.account_id).accountSession)
@@ -483,7 +499,7 @@ export class BrowserProfileManager {
     await this.closeWorkspace()
   }
 
-  private createWorkspaceTab(workspace: BrowserWorkspace, fallbackTitle: string): BrowserWorkspaceTab {
+  private createWorkspaceTab(workspace: BrowserWorkspace, fallbackTitle: string, shortcut: TmallWorkspaceShortcut | null = null): BrowserWorkspaceTab {
     const view = new WebContentsView({
       webPreferences: {
         session: workspace.accountSession,
@@ -509,7 +525,7 @@ export class BrowserProfileManager {
       ) return
       this.setObservedLoginStatus(workspace.account, status)
     }
-    const tab: BrowserWorkspaceTab = { tabId, fallbackTitle, view, contents, statusHandler }
+    const tab: BrowserWorkspaceTab = { tabId, fallbackTitle, view, contents, statusHandler, shortcut }
     workspace.tabs.push(tab)
     ipcMain.on(ACCOUNT_LOGIN_AUTOMATION_CHANNELS.status, statusHandler)
     this.guardNavigation(contents, workspace)
@@ -550,7 +566,7 @@ export class BrowserProfileManager {
   }
 
   private guardNavigation(contents: WebContents, workspace: BrowserWorkspace): void {
-    const allowedHosts = [...new Set(workspace.account.allowed_hosts)]
+    const allowedHosts = this.allowedWorkspaceHosts(workspace)
     contents.on('will-navigate', (event, url) => {
       if (!isAllowedAccountUrl(url, allowedHosts)) event.preventDefault()
     })
@@ -571,6 +587,10 @@ export class BrowserProfileManager {
       })
       return { action: 'deny' }
     })
+  }
+
+  private allowedWorkspaceHosts(workspace: BrowserWorkspace): string[] {
+    return [...new Set([...workspace.account.allowed_hosts, ...getPlatformPreset(workspace.account.platform).allowedHosts])]
   }
 
   private attachActiveTab(workspace: BrowserWorkspace): void {
@@ -699,14 +719,8 @@ export class BrowserProfileManager {
   private async prepareAutomaticLogin(account: AccountConfig, contents: WebContents): Promise<void> {
     const workspace = this.workspace
     if (!workspace || workspace.accountId !== account.account_id || !workspace.tabs.some((tab) => tab.contents === contents) || contents.isDestroyed()) return
-    let hostname = ''
-    try {
-      hostname = new URL(contents.getURL()).hostname
-    } catch {
-      return
-    }
     const preset = getPlatformPreset(account.platform)
-    if (preset.authenticatedHosts.includes(hostname)) {
+    if (isAuthenticatedUrl(contents.getURL(), preset.authenticatedHosts)) {
       this.setObservedLoginStatus(account, 'authenticated')
       return
     }
@@ -730,15 +744,9 @@ export class BrowserProfileManager {
 
   private inspectAndPublishLogin(account: AccountConfig, contents: WebContents): void {
     if (contents.isDestroyed()) return
-    let hostname = ''
-    try {
-      hostname = new URL(contents.getURL()).hostname
-    } catch {
-      return
-    }
     const preset = getPlatformPreset(account.platform)
-    if (preset.authenticatedHosts.includes(hostname)) this.setObservedLoginStatus(account, 'authenticated')
-    else if (!this.workspace?.observedStatus) this.setObservedLoginStatus(account, 'need_human_login')
+    if (isAuthenticatedUrl(contents.getURL(), preset.authenticatedHosts)) this.setObservedLoginStatus(account, 'authenticated')
+    else if (!this.workspace?.observedStatus || this.workspace.observedStatus === 'authenticated') this.setObservedLoginStatus(account, 'need_human_login')
   }
 
   private setObservedLoginStatus(account: AccountConfig, status: LoginState): void {
@@ -849,10 +857,37 @@ class TmallLoginRequiredError extends Error {
 
 function isAuthenticatedUrl(value: string, authenticatedHosts: readonly string[]): boolean {
   try {
-    return authenticatedHosts.includes(new URL(value).hostname)
+    const url = new URL(value)
+    return authenticatedHosts.includes(url.hostname) && !/\/(?:custom\/login|login|passport)(?:[/.]|$)/iu.test(`${url.pathname}${url.hash}`)
   } catch {
     return false
   }
+}
+
+async function clickWanxiangBackendEntry(contents: WebContents): Promise<boolean> {
+  if (contents.isDestroyed()) return false
+  return await contents.executeJavaScript(`(() => {
+    const labels = ['进入后台', '进入万相台无界版'];
+    const deadline = Date.now() + 12000;
+    const normalize = (value) => String(value || '').replace(/\\s+/g, '');
+    const visible = (element) => element instanceof HTMLElement && !element.hasAttribute('disabled') && element.getClientRects().length > 0;
+    return new Promise((resolve) => {
+      const findAndClick = () => {
+        const elements = [...document.querySelectorAll('button, a, [role="button"]')];
+        for (const label of labels) {
+          const target = elements.find((element) => visible(element) && normalize(element.textContent).includes(label));
+          if (target instanceof HTMLElement) {
+            target.click();
+            resolve(true);
+            return;
+          }
+        }
+        if (Date.now() >= deadline) resolve(false);
+        else setTimeout(findAndClick, 250);
+      };
+      findAndClick();
+    });
+  })()`, true) as boolean
 }
 
 function sanitizeDisplayUrl(value: string): string | null {
