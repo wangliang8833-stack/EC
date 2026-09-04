@@ -12,6 +12,9 @@ import { registerIpcHandlers } from './ipc/register-ipc.js'
 import { IPC_CHANNELS } from './ipc/channels.js'
 import { StorageSettingsRepository, type PersistedStorageSettings } from './settings/storage-settings-repository.js'
 import { JsonStorageService } from './storage/json-storage-service.js'
+import { AiModelSettingsRepository } from './ai/ai-model-settings-repository.js'
+import { LlmProvider } from './ai/llm-provider.js'
+import { AiDecisionRepository } from './ai/ai-decision-repository.js'
 
 const loggerOptions: pino.LoggerOptions = {
   level: process.env['LOG_LEVEL'] ?? 'info',
@@ -106,6 +109,9 @@ async function bootstrap(): Promise<void> {
     decrypt: (value: Buffer) => safeStorage.decryptString(value)
   }
   const credentialVault = new AccountCredentialVault(app.getPath('sessionData'), credentialEncryption)
+  const aiSettings = new AiModelSettingsRepository(storage, app.getPath('sessionData'), credentialEncryption)
+  const llm = new LlmProvider(aiSettings, storage, logger.child({ component: 'llm-provider' }))
+  const aiDecisions = new AiDecisionRepository(storage)
   const sessionCookieVault = new SessionCookieVault(app.getPath('sessionData'), {
     isAvailable: () => safeStorage.isEncryptionAvailable(),
     encrypt: (value) => safeStorage.encryptString(value),
@@ -139,6 +145,9 @@ async function bootstrap(): Promise<void> {
     tmallProbe,
     storageSettings,
     storage,
+    aiSettings,
+    llm,
+    aiDecisions,
     dataRoot,
     environmentDataRoot: app.getPath('sessionData'),
     developmentLogPath,

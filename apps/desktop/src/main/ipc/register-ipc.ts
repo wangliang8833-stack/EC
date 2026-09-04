@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { app, dialog, ipcMain, type BrowserWindow } from 'electron'
-import type { DataUpdateRequest, DataUpdateResult, ReportDataset, ReportQuery, ScheduledJobInput, SystemStorageSettings } from '@ecommerce/shared'
+import type { AiDecisionInput, AiDecisionModule, AiGenerateRequest, DataUpdateRequest, DataUpdateResult, ReportDataset, ReportQuery, ScheduledJobInput, SystemStorageSettings, UpdateAiModelSettingsInput } from '@ecommerce/shared'
 import type { AccountRepository } from '../accounts/account-repository.js'
 import type { AccountCredentialVault } from '../accounts/account-credential-vault.js'
 import type { TmallProbeService } from '../adapters/tmall/tmall-probe-service.js'
@@ -14,6 +14,9 @@ import { buildPromotionReport } from '../reports/promotion-report.js'
 import { loadPromotionDetails, mergePromotionDetailBundles } from '../reports/promotion-detail-loader.js'
 import { assertAccountCredentialInput, assertCreateAccountInput, assertDataUpdateRequest, assertReportQuery, assertSafeId, assertStorageDirectoryKind, assertUpdateAccountInput, assertUpdateStorageSettingsInput, assertWorkspaceBounds } from '../security/input-validation.js'
 import { IPC_CHANNELS } from './channels.js'
+import type { AiModelSettingsRepository } from '../ai/ai-model-settings-repository.js'
+import type { LlmProvider } from '../ai/llm-provider.js'
+import type { AiDecisionRepository } from '../ai/ai-decision-repository.js'
 
 export interface IpcServices {
   accounts: AccountRepository
@@ -22,6 +25,9 @@ export interface IpcServices {
   tmallProbe: TmallProbeService
   storageSettings: StorageSettingsRepository
   storage: JsonStorageService
+  aiSettings: AiModelSettingsRepository
+  llm: LlmProvider
+  aiDecisions: AiDecisionRepository
   dataRoot: string
   environmentDataRoot: string
   developmentLogPath: string
@@ -118,7 +124,7 @@ export function registerIpcHandlers(services: IpcServices): () => void {
   })
   ipcMain.handle(IPC_CHANNELS.accountsWorkspaceShortcutOpen, (_event, leaseId: unknown, shortcut: unknown) => {
     assertSafeId(leaseId, 'leaseId')
-    if (shortcut !== 'sycm' && shortcut !== 'wanxiang' && shortcut !== 'seller') throw new TypeError('Unsupported workspace shortcut')
+    if (shortcut !== 'sycm' && shortcut !== 'wanxiang' && shortcut !== 'seller' && shortcut !== 'dmp') throw new TypeError('Unsupported workspace shortcut')
     return services.browserProfiles.openWorkspaceShortcut(leaseId, shortcut)
   })
   ipcMain.handle(IPC_CHANNELS.accountsWorkspaceTabActivate, (_event, leaseId: unknown, tabId: unknown) => {
@@ -235,6 +241,16 @@ export function registerIpcHandlers(services: IpcServices): () => void {
   ipcMain.handle(IPC_CHANNELS.reportsExportCsv, () => {
     throw new Error('CSV export is not implemented yet')
   })
+
+  ipcMain.handle(IPC_CHANNELS.aiSettingsGet, () => services.aiSettings.get())
+  ipcMain.handle(IPC_CHANNELS.aiSettingsUpdate, (_event, input: UpdateAiModelSettingsInput) => services.aiSettings.update(input))
+  ipcMain.handle(IPC_CHANNELS.aiConnectionTest, (_event, model?: unknown) => {
+    if (model !== undefined && (typeof model !== 'string' || model.length > 160)) throw new TypeError('模型名无效。')
+    return services.llm.test(model as string | undefined)
+  })
+  ipcMain.handle(IPC_CHANNELS.aiGenerate, (_event, input: AiGenerateRequest) => services.llm.generate(input))
+  ipcMain.handle(IPC_CHANNELS.aiDecisionsList, (_event, module: AiDecisionModule) => services.aiDecisions.list(module))
+  ipcMain.handle(IPC_CHANNELS.aiDecisionSave, (_event, input: AiDecisionInput) => services.aiDecisions.save(input))
 
   ipcMain.handle(IPC_CHANNELS.systemHealth, () => ({
     status: 'ok' as const,

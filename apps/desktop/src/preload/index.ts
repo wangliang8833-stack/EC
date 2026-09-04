@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CsvExportRequest, DataUpdateRequest, DesktopApi, ReportQuery } from '@ecommerce/shared'
+import type { AiDecisionInput, AiDecisionModule, AiGenerateRequest, CsvExportRequest, DataUpdateRequest, DesktopApi, ReportQuery, UpdateAiModelSettingsInput } from '@ecommerce/shared'
 import { IPC_CHANNELS } from '../main/ipc/channels.js'
 
 const desktopApi: DesktopApi = {
@@ -54,6 +54,14 @@ const desktopApi: DesktopApi = {
     update: (input: DataUpdateRequest) => ipcRenderer.invoke(IPC_CHANNELS.reportsUpdate, input),
     cancelUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.reportsCancelUpdate),
     exportCsv: (input: CsvExportRequest) => ipcRenderer.invoke(IPC_CHANNELS.reportsExportCsv, input)
+  },
+  ai: {
+    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.aiSettingsGet),
+    updateSettings: (input: UpdateAiModelSettingsInput) => ipcRenderer.invoke(IPC_CHANNELS.aiSettingsUpdate, input),
+    testConnection: (model?: string) => ipcRenderer.invoke(IPC_CHANNELS.aiConnectionTest, model),
+    generate: (input: AiGenerateRequest) => ipcRenderer.invoke(IPC_CHANNELS.aiGenerate, input),
+    listDecisions: (module: AiDecisionModule) => ipcRenderer.invoke(IPC_CHANNELS.aiDecisionsList, module),
+    saveDecision: (input: AiDecisionInput) => ipcRenderer.invoke(IPC_CHANNELS.aiDecisionSave, input)
   },
   system: {
     getHealth: () => ipcRenderer.invoke(IPC_CHANNELS.systemHealth),

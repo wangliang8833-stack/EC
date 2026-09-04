@@ -400,6 +400,65 @@ export interface SystemStorageSettings {
   remoteServerStatus: 'not_implemented'
 }
 
+export type AiProviderCode = 'openai' | 'deepseek' | 'qwen' | 'openai_compatible'
+export type AiTaskType = 'product_selection_analysis' | 'ecommerce_operation_strategy' | 'analytics_explanation' | 'analytics_question_planning'
+
+export interface AiModelSettings {
+  provider: AiProviderCode
+  baseUrl: string
+  models: string[]
+  defaultModel: string | null
+  apiKeyConfigured: boolean
+  updatedAt: string | null
+}
+
+export interface UpdateAiModelSettingsInput {
+  provider: AiProviderCode
+  baseUrl: string
+  models: string[]
+  defaultModel: string
+  apiKey?: string
+}
+
+export interface AiConnectionTestResult {
+  connected: boolean
+  model: string
+  message: string
+  checkedAt: string
+}
+
+export interface AiGenerateRequest {
+  task: AiTaskType
+  model: string
+  systemPrompt: string
+  input: Record<string, unknown>
+}
+
+export interface AiGenerateResult {
+  requestId: string
+  task: AiTaskType
+  provider: AiProviderCode
+  model: string
+  output: Record<string, unknown>
+  generatedAt: string
+  durationMs: number
+}
+
+export type AiDecisionModule = 'selection' | 'operations'
+
+export interface AiDecisionInput {
+  module: AiDecisionModule
+  entityId: string
+  action: 'ADD_TO_POOL' | 'WATCH' | 'REJECT' | 'SUBMIT_FOR_APPROVAL' | 'APPROVE' | 'DECLINE'
+  summary: string
+  payload: Record<string, unknown>
+}
+
+export interface AiDecisionRecord extends AiDecisionInput {
+  decisionId: string
+  createdAt: string
+}
+
 export interface UpdateStorageSettingsInput {
   localDataDirectory: string
   environmentDataDirectory: string
@@ -413,7 +472,7 @@ export interface WorkspaceBounds {
 }
 
 export type WorkspaceNavigationAction = 'back' | 'forward' | 'reload'
-export type TmallWorkspaceShortcut = 'sycm' | 'wanxiang' | 'seller'
+export type TmallWorkspaceShortcut = 'sycm' | 'wanxiang' | 'seller' | 'dmp'
 
 export interface WorkspaceTabSummary {
   tabId: string
@@ -469,6 +528,14 @@ export interface DesktopApi {
     update(input: DataUpdateRequest): Promise<DataUpdateResult>
     cancelUpdate(): Promise<void>
     exportCsv(input: CsvExportRequest): Promise<ExportResult>
+  }
+  ai: {
+    getSettings(): Promise<AiModelSettings>
+    updateSettings(input: UpdateAiModelSettingsInput): Promise<AiModelSettings>
+    testConnection(model?: string): Promise<AiConnectionTestResult>
+    generate(input: AiGenerateRequest): Promise<AiGenerateResult>
+    listDecisions(module: AiDecisionModule): Promise<AiDecisionRecord[]>
+    saveDecision(input: AiDecisionInput): Promise<AiDecisionRecord>
   }
   system: {
     getHealth(): Promise<SystemHealth>

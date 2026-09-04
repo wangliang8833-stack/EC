@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Dropdown, Form, Input, InputNumber, Modal, Popover, Select, Space, Steps, Switch, Table, Tag, message } from 'antd'
-import type { AccountCredentialInput, AccountPlatform, AccountSummary, CollectionProgress, CreateAccountInput, JobSummary, LoginState, ReportDataset, ScheduledJobInput, StorageDirectoryKind, SystemHealth, SystemStorageSettings, TmallWorkspaceShortcut, UpdateAccountInput, WorkspaceBounds, WorkspaceBrowserState, WorkspaceNavigationAction } from '@ecommerce/shared'
+import type { AccountCredentialInput, AccountPlatform, AccountSummary, AiModelSettings, CollectionProgress, CreateAccountInput, JobSummary, LoginState, ReportDataset, ScheduledJobInput, StorageDirectoryKind, SystemHealth, SystemStorageSettings, TmallWorkspaceShortcut, UpdateAccountInput, WorkspaceBounds, WorkspaceBrowserState, WorkspaceNavigationAction } from '@ecommerce/shared'
 import { EChart, type DashboardChartOption } from './EChart.js'
 import { mergeWorkspaceBrowserState } from './workspace-browser-state.js'
 import { markNotificationsRead, upsertNotification, type AppNotification, type NotificationInput } from './notifications.js'
 import { ProductReport } from './ProductReport.js'
 import { PromotionReport } from './PromotionReport.js'
 import { RoiCalculator } from './RoiCalculator.js'
+import { AiAnalyticsView, AiOperationsView, AiSelectionView } from './AiWorkspace.js'
+import { AiModelSettingsPanel } from './AiModelSettingsPanel.js'
 
-type ViewKey = 'overview' | 'product-report' | 'promotion-report' | 'roi-calculator' | 'quality' | 'jobs' | 'accounts' | 'settings' | 'help'
+type ViewKey = 'overview' | 'product-report' | 'promotion-report' | 'roi-calculator' | 'ai-selection' | 'ai-operations' | 'ai-analysis' | 'quality' | 'jobs' | 'accounts' | 'settings' | 'help'
 type ShopAction = 'open' | 'check' | 'probe'
 type WorkspaceAction = Exclude<ShopAction, 'open'>
 type IconName = 'dashboard' | 'database' | 'shop' | 'tasks' | 'settings' | 'folder' | 'cloud' | 'server' | 'chevron' | 'back' | 'forward' | 'refresh' | 'download' | 'bell' | 'help' | 'shield' | 'chart' | 'calculator' | 'copy' | 'check'
@@ -29,8 +31,9 @@ const navGroups: NavGroup[] = [
     { key: 'promotion-report', label: '推广报表' }
   ] },
   { key: 'roi-calculator', label: 'ROI计算器', icon: 'calculator', view: 'roi-calculator', children: [] },
-  { key: 'ai-operations', label: 'AI自动运营', icon: 'tasks', pending: true, children: [] },
-  { key: 'ai-analysis', label: 'AI数据分析', icon: 'chart', pending: true, children: [] },
+  { key: 'ai-selection', label: 'AI选品', icon: 'database', view: 'ai-selection', children: [] },
+  { key: 'ai-operations', label: 'AI自动运营', icon: 'tasks', view: 'ai-operations', children: [] },
+  { key: 'ai-analysis', label: 'AI数据分析', icon: 'chart', view: 'ai-analysis', children: [] },
   { key: 'shops', label: '店铺列表', icon: 'shop', children: [] }
 ]
 
@@ -85,6 +88,8 @@ export function App(): React.JSX.Element {
   const [health, setHealth] = useState<SystemHealth | null>(null)
   const [accounts, setAccounts] = useState<AccountSummary[]>([])
   const [jobs, setJobs] = useState<JobSummary[]>([])
+  const [aiSettings, setAiSettings] = useState<AiModelSettings | null>(null)
+  const [activeAiModel, setActiveAiModel] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<ViewKey>('overview')
   const [openGroups, setOpenGroups] = useState(() => new Set(['dashboard']))
@@ -111,20 +116,25 @@ export function App(): React.JSX.Element {
         setAccounts(demoAccounts)
         setJobs([])
         setRestartRequired(false)
+        setAiSettings(null)
+        setActiveAiModel(null)
         setError(null)
         notify({ id: 'preview:mode', tone: 'info', title: '浏览器视觉预览', description: '当前为浏览器视觉预览；Electron 主程序才会读取本地账号、通知和任务数据。' })
         return
       }
-      const [nextHealth, nextAccounts, nextJobs, nextStorageSettings] = await Promise.all([
+      const [nextHealth, nextAccounts, nextJobs, nextStorageSettings, nextAiSettings] = await Promise.all([
         window.desktopApi.system.getHealth(),
         window.desktopApi.accounts.list(),
         window.desktopApi.jobs.list(),
-        window.desktopApi.system.getStorageSettings()
+        window.desktopApi.system.getStorageSettings(),
+        window.desktopApi.ai.getSettings()
       ])
       setHealth(nextHealth)
       setAccounts(nextAccounts)
       setJobs(nextJobs)
       setRestartRequired(nextStorageSettings.restartRequired)
+      setAiSettings(nextAiSettings)
+      setActiveAiModel((current) => current && nextAiSettings.models.includes(current) ? current : nextAiSettings.defaultModel ?? nextAiSettings.models[0] ?? null)
       setError(null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -385,17 +395,20 @@ export function App(): React.JSX.Element {
 
         <main className={`main-canvas ${activeShop ? 'shop-workspace-active' : ''}`}>{activeShop ? <ShopWorkspace account={activeShop} isPreview={isBrowserPreview} action={workspaceAction} progress={collectionProgress[activeShop.accountId] ?? null} closing={workspaceClosing} onReady={handleWorkspaceReady} onCheck={() => void runWorkspaceAction(activeShop, 'check')} onProbe={() => void runWorkspaceAction(activeShop, 'probe')} onCancel={() => void cancelCollection(activeShop)} onBack={() => void leaveShopWorkspace(activeShop)} onError={(reason) => notify({ id: `workspace:${activeShop.accountId}:browser-error`, tone: 'error', title: '店铺后台打开失败', description: errorMessage(reason) })} /> : <div className="content-container">
           <div className="page-heading">
-            <div><div className="breadcrumb">工作台 / {activeLabel}</div><h1>{activeLabel === '销售总览' ? '多平台销售看板' : activeLabel}</h1><p>{activeView === 'overview' ? '按自然日查看全部有效店铺经营数据' : activeView === 'product-report' ? '查看商品流量、成交、退款与经营机会' : activeView === 'promotion-report' ? '查看推广消耗、成交归因、计划覆盖与数据质量' : activeView === 'roi-calculator' ? '测算商品推广的保本 ROAS、盈利周期与逐月现金流' : activeView === 'settings' ? '管理数据目录、程序环境与远程服务' : activeView === 'jobs' ? '管理自动采集时间、平台范围与批次执行策略' : activeView === 'help' ? '了解系统核心功能、业务架构与使用支持' : '阶段 0 本地管理工作台'}</p></div>
-            {activeView === 'settings' || activeView === 'help' ? null : <div className="heading-actions"><span className="demo-badge">{activeView === 'roi-calculator' ? '本地计算' : isBrowserPreview ? '演示数据' : '本地数据'}</span>{activeView === 'roi-calculator' ? null : <Button icon={<Icon name="download" />} disabled>导出 CSV</Button>}</div>}
+            <div><div className="breadcrumb">工作台 / {activeLabel}</div><h1>{activeLabel === '销售总览' ? '多平台销售看板' : activeLabel}</h1><p>{activeView === 'overview' ? '按自然日查看全部有效店铺经营数据' : activeView === 'product-report' ? '查看商品流量、成交、退款与经营机会' : activeView === 'promotion-report' ? '查看推广消耗、成交归因、计划覆盖与数据质量' : activeView === 'roi-calculator' ? '测算商品推广的保本 ROAS、盈利周期与逐月现金流' : activeView === 'ai-selection' ? '基于真实商品事实进行可解释评分，并由大模型解读候选机会' : activeView === 'ai-operations' ? '以规则 Signal、策略校验和人工审批驱动安全运营建议' : activeView === 'ai-analysis' ? '统一指标诊断、异常发现与有证据的 AI 问数' : activeView === 'settings' ? '管理数据目录、AI 大模型、程序环境与远程服务' : activeView === 'jobs' ? '管理自动采集时间、平台范围与批次执行策略' : activeView === 'help' ? '了解系统核心功能、业务架构与使用支持' : '阶段 0 本地管理工作台'}</p></div>
+            {activeView === 'settings' || activeView === 'help' || activeView.startsWith('ai-') ? null : <div className="heading-actions"><span className="demo-badge">{activeView === 'roi-calculator' ? '本地计算' : isBrowserPreview ? '演示数据' : '本地数据'}</span>{activeView === 'roi-calculator' ? null : <Button icon={<Icon name="download" />} disabled>导出 CSV</Button>}</div>}
           </div>
           {activeView === 'overview' ? <Dashboard accounts={accounts} isPreview={isBrowserPreview} progress={collectionProgress} onNotify={notify} /> : null}
           {activeView === 'product-report' ? <ProductReport accounts={accounts} isPreview={isBrowserPreview} onNotify={notify} /> : null}
           {activeView === 'promotion-report' ? <PromotionReport accounts={accounts} isPreview={isBrowserPreview} onNotify={notify} /> : null}
           {activeView === 'roi-calculator' ? <RoiCalculator /> : null}
+          {activeView === 'ai-selection' ? <AiSelectionView accounts={accounts} isPreview={isBrowserPreview} settings={aiSettings} model={activeAiModel} onModelChange={setActiveAiModel} onOpenSettings={() => void selectSystemView('settings')} /> : null}
+          {activeView === 'ai-operations' ? <AiOperationsView accounts={accounts} isPreview={isBrowserPreview} settings={aiSettings} model={activeAiModel} onModelChange={setActiveAiModel} onOpenSettings={() => void selectSystemView('settings')} /> : null}
+          {activeView === 'ai-analysis' ? <AiAnalyticsView accounts={accounts} isPreview={isBrowserPreview} settings={aiSettings} model={activeAiModel} onModelChange={setActiveAiModel} onOpenSettings={() => void selectSystemView('settings')} /> : null}
           {activeView === 'accounts' ? <AccountsView accounts={accounts} isPreview={isBrowserPreview} onAccountsChanged={refresh} onShopAction={selectShop} /> : null}
           {activeView === 'jobs' ? <JobsView jobs={jobs} accounts={accounts} isPreview={isBrowserPreview} onJobsChanged={setJobs} onNotify={notify} /> : null}
           {activeView === 'quality' ? <QualityView /> : null}
-          {activeView === 'settings' ? <SystemSettingsView isPreview={isBrowserPreview} health={health} onRestartRequired={() => setRestartRequired(true)} /> : null}
+          {activeView === 'settings' ? <SystemSettingsView isPreview={isBrowserPreview} health={health} aiSettings={aiSettings} onAiSettingsChanged={(next) => { setAiSettings(next); setActiveAiModel(next.defaultModel ?? next.models[0] ?? null) }} onRestartRequired={() => setRestartRequired(true)} /> : null}
           {activeView === 'help' ? <HelpFeedbackView health={health} isPreview={isBrowserPreview} onNavigate={(view) => void selectSystemView(view)} onNotify={notify} /> : null}
         </div>}</main>
       </div>
@@ -547,7 +560,7 @@ function ShopWorkspace({ account, isPreview, action, progress, closing, onReady,
 
   async function openShortcut(shortcut: TmallWorkspaceShortcut): Promise<void> {
     const leaseId = leaseIdRef.current
-    if (!leaseId || account.platform !== 'tmall' || isPreview || !window.desktopApi || browserBusy || closing) return
+    if (!leaseId || (account.platform !== 'tmall' && account.platform !== 'taobao') || isPreview || !window.desktopApi || browserBusy || closing) return
     setBrowserBusy(true)
     try {
       const state = await window.desktopApi.accounts.openWorkspaceShortcut(leaseId, shortcut)
@@ -577,24 +590,29 @@ function ShopWorkspace({ account, isPreview, action, progress, closing, onReady,
 
   return <div className="shop-workspace-shell">
     <div className="shop-workspace-toolbar">
-      <div className="shop-workspace-title"><span className="state-dot online" /><strong>{platformLabel(account.platform)}-{account.shopName}</strong><Tag color={loginStatusColor(account.loginStatus)}>{loginStatusLabel(account.loginStatus)}</Tag></div>
-      <div className="shop-browser-actions" role="toolbar" aria-label="店铺浏览器导航">
-        <Button size="small" aria-label="后退" title="后退" disabled={!activeTab?.canGoBack || browserBusy || closing} onClick={() => void navigate('back')}><Icon name="back" /></Button>
-        <Button size="small" aria-label="前进" title="前进" disabled={!activeTab?.canGoForward || browserBusy || closing} onClick={() => void navigate('forward')}><Icon name="forward" /></Button>
-        <Button
-          size="small"
-          className={activeTab?.loading || browserBusy ? 'is-loading' : ''}
-          aria-label={activeTab?.loading || browserBusy ? '正在刷新' : '刷新'}
-          title={activeTab?.loading || browserBusy ? '正在刷新' : '刷新当前标签'}
-          disabled={!activeTab || activeTab.loading || browserBusy || closing}
-          onClick={() => void navigate('reload')}
-        ><Icon name="refresh" /></Button>
+      <div className="shop-workspace-leading">
+        <div className="shop-workspace-title"><span className="state-dot online" /><strong>{platformLabel(account.platform)}-{account.shopName}</strong><Tag color={loginStatusColor(account.loginStatus)}>{loginStatusLabel(account.loginStatus)}</Tag></div>
+        <div className="shop-browser-actions" role="toolbar" aria-label="店铺浏览器导航">
+          <Button size="small" aria-label="后退" title="后退" disabled={!activeTab?.canGoBack || browserBusy || closing} onClick={() => void navigate('back')}><Icon name="back" /></Button>
+          <Button size="small" aria-label="前进" title="前进" disabled={!activeTab?.canGoForward || browserBusy || closing} onClick={() => void navigate('forward')}><Icon name="forward" /></Button>
+          <Button
+            size="small"
+            className={activeTab?.loading || browserBusy ? 'is-loading' : ''}
+            aria-label={activeTab?.loading || browserBusy ? '正在刷新' : '刷新'}
+            title={activeTab?.loading || browserBusy ? '正在刷新' : '刷新当前标签'}
+            disabled={!activeTab || activeTab.loading || browserBusy || closing}
+            onClick={() => void navigate('reload')}
+          ><Icon name="refresh" /></Button>
+        </div>
       </div>
       <Space className="shop-workspace-operations" size={8}>
-        {account.platform === 'tmall' ? <div className="shop-workspace-shortcuts" role="group" aria-label="天猫后台快捷入口">
-          <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('sycm')}>生意参谋</Button>
-          <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('wanxiang')}>万相台</Button>
-          <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('seller')}>卖家首页</Button>
+        {account.platform === 'tmall' || account.platform === 'taobao' ? <div className="shop-workspace-shortcuts" role="group" aria-label="淘宝生态后台快捷入口">
+          {account.platform === 'tmall' ? <>
+            <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('sycm')}>生意参谋</Button>
+            <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('wanxiang')}>万相台</Button>
+            <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('seller')}>卖家首页</Button>
+          </> : null}
+          <Button size="small" disabled={browserBusy || closing} onClick={() => void openShortcut('dmp')}>达摩盘</Button>
         </div> : null}
         <Button size="small" loading={closing} disabled={closing} onClick={onBack}>返回账号环境</Button>
         <Button size="small" loading={action === 'check'} disabled={action !== null || closing} onClick={onCheck}>检测登录</Button>
@@ -1131,7 +1149,7 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
 }
 
-function SystemSettingsView({ isPreview, health, onRestartRequired }: { isPreview: boolean; health: SystemHealth | null; onRestartRequired: () => void }): React.JSX.Element {
+function SystemSettingsView({ isPreview, health, aiSettings, onAiSettingsChanged, onRestartRequired }: { isPreview: boolean; health: SystemHealth | null; aiSettings: AiModelSettings | null; onAiSettingsChanged: (settings: AiModelSettings) => void; onRestartRequired: () => void }): React.JSX.Element {
   const [settings, setSettings] = useState<SystemStorageSettings | null>(null)
   const [localDataDirectory, setLocalDataDirectory] = useState('')
   const [environmentDataDirectory, setEnvironmentDataDirectory] = useState('')
@@ -1187,6 +1205,7 @@ function SystemSettingsView({ isPreview, health, onRestartRequired }: { isPrevie
   return <>
     {messageContext}
     {settings?.restartRequired ? <Alert className="settings-restart-alert" type="warning" showIcon title="目录设置已保存，等待重启生效" description="程序不会自动搬移原目录中的文件。确认旧数据已备份后再手工迁移；更换环境目录后，平台账号可能需要重新登录。" /> : null}
+    <AiModelSettingsPanel isPreview={isPreview} settings={aiSettings} onChanged={onAiSettingsChanged} />
     <section className="settings-section">
       <div className="settings-section-heading"><div><h2>本地存储</h2><p>选择目录后自动保存，等待用户手动重启后应用新路径</p></div></div>
       <div className="settings-grid">

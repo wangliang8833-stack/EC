@@ -20,7 +20,7 @@ import { flushPersistentSession } from './session-persistence.js'
 import { isAllowedCookieDomain, SessionCookieVault } from './session-cookie-vault.js'
 import { OpeningWorkspaceLease, ownsWorkspaceLease } from './workspace-lease.js'
 import { canOpenWorkspacePopup, nextWorkspaceTabId } from './workspace-tab-policy.js'
-import { isWanxiangLoginUrl, resolveWorkspaceShortcut } from './workspace-shortcuts.js'
+import { resolveWorkspaceShortcut, shouldClickBackendEntry } from './workspace-shortcuts.js'
 import { runBoundedOperation, runCollectionSequence, type CollectionSequenceProgressPhase } from '../adapters/tmall/collection-execution.js'
 
 export interface LoginInspection {
@@ -192,9 +192,12 @@ export class BrowserProfileManager {
     this.attachActiveTab(workspace)
     this.publishWorkspaceState(workspace)
     await tab.contents.loadURL(target.url)
-    if (shortcut === 'wanxiang' && isWanxiangLoginUrl(tab.contents.getURL())) {
-      const entered = await clickWanxiangBackendEntry(tab.contents)
-      if (!entered) throw new Error('万相台登录页已打开，但未找到“进入后台”按钮，请在页面中手动点击进入。')
+    if (shouldClickBackendEntry(shortcut, tab.contents.getURL())) {
+      const entered = await clickBackendEntry(tab.contents, shortcut)
+      if (!entered) {
+        const platformName = shortcut === 'dmp' ? '达摩盘' : '万相台'
+        throw new Error(`${platformName}首页已打开，但未找到“进入后台”按钮，请在页面中手动点击进入。`)
+      }
     }
     return this.publishWorkspaceState(workspace)
   }
@@ -864,10 +867,11 @@ function isAuthenticatedUrl(value: string, authenticatedHosts: readonly string[]
   }
 }
 
-async function clickWanxiangBackendEntry(contents: WebContents): Promise<boolean> {
+async function clickBackendEntry(contents: WebContents, shortcut: TmallWorkspaceShortcut): Promise<boolean> {
   if (contents.isDestroyed()) return false
+  const labels = shortcut === 'wanxiang' ? ['进入后台', '进入万相台无界版'] : ['进入后台']
   return await contents.executeJavaScript(`(() => {
-    const labels = ['进入后台', '进入万相台无界版'];
+    const labels = ${JSON.stringify(labels)};
     const deadline = Date.now() + 12000;
     const normalize = (value) => String(value || '').replace(/\\s+/g, '');
     const visible = (element) => element instanceof HTMLElement && !element.hasAttribute('disabled') && element.getClientRects().length > 0;

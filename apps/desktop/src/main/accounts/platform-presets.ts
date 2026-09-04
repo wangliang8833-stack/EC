@@ -16,7 +16,7 @@ export const TMALL_PRESET: PlatformPreset = {
   loginUrl: 'https://myseller.taobao.com/home.htm',
   collectionProbeUrl: 'https://sycm.taobao.com/',
   allowedHosts: ['taobao.com', 'tmall.com', 'alimama.com', 'alibaba.com', 'alipay.com'],
-  authenticatedHosts: ['myseller.taobao.com', 'sycm.taobao.com', 'one.alimama.com', 'qn.taobao.com'],
+  authenticatedHosts: ['myseller.taobao.com', 'sycm.taobao.com', 'one.alimama.com', 'dmp.taobao.com', 'qn.taobao.com'],
   credentialHosts: ['login.taobao.com', 'havanalogin.taobao.com', 'login.tmall.com', 'passport.alibaba.com']
 }
 
@@ -24,7 +24,7 @@ const PLATFORM_PRESETS: Readonly<Record<AccountPlatform, PlatformPreset>> = {
   tmall: TMALL_PRESET,
   taobao: {
     platform: 'taobao', label: '淘宝', loginUrl: 'https://myseller.taobao.com/home.htm', collectionProbeUrl: 'https://myseller.taobao.com/home.htm',
-    allowedHosts: ['taobao.com', 'tmall.com', 'alibaba.com', 'alipay.com'], authenticatedHosts: ['myseller.taobao.com', 'qn.taobao.com'], credentialHosts: ['login.taobao.com', 'havanalogin.taobao.com', 'passport.alibaba.com']
+    allowedHosts: ['taobao.com', 'tmall.com', 'alibaba.com', 'alipay.com'], authenticatedHosts: ['myseller.taobao.com', 'dmp.taobao.com', 'qn.taobao.com'], credentialHosts: ['login.taobao.com', 'havanalogin.taobao.com', 'passport.alibaba.com']
   },
   pinduoduo: {
     platform: 'pinduoduo', label: '拼多多', loginUrl: 'https://mms.pinduoduo.com/', collectionProbeUrl: 'https://mms.pinduoduo.com/',
