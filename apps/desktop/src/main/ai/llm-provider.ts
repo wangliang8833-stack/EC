@@ -5,7 +5,7 @@ import type { AiModelSettingsRepository } from './ai-model-settings-repository.j
 import type { JsonStorageService } from '../storage/json-storage-service.js'
 
 const MAX_INPUT_BYTES = 256 * 1024
-const TASKS = new Set(['product_selection_analysis', 'ecommerce_operation_strategy', 'analytics_explanation', 'analytics_question_planning'])
+const TASKS = new Set(['product_selection_analysis', 'ecommerce_operation_strategy'])
 
 export class LlmProvider {
   constructor(private readonly settings: AiModelSettingsRepository, private readonly storage: JsonStorageService, private readonly logger: pino.Logger) {}

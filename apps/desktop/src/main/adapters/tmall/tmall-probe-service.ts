@@ -5,6 +5,9 @@ import type { JsonStorageService } from '../../storage/json-storage-service.js'
 import { CollectionCancelledError, runBoundedOperation } from './collection-execution.js'
 import { normalizeTmallDaily, TMALL_NORMALIZER_VERSION } from './tmall-daily-normalizer.js'
 import { validateTmallPage, validateTmallSnapshot, type TmallSourceValidation } from './tmall-source-validation.js'
+import { isBusinessDate } from '@ecommerce/shared'
+import { assertSafeId } from '../../security/input-validation.js'
+import { filterHistorySnapshot, TmallHistoryStore } from './tmall-history-store.js'
 
 const DAILY_WARNING = '已采集生意参谋所选日期的经营、成功退款汇总与 Top 数据；订单/退款明细、广告计划明细和结算数据尚未接入，数据质量标记为部分完整。'
 const TOTAL_COLLECTION_TIMEOUT_MS = 180_000
@@ -14,6 +17,7 @@ export interface TmallProbeRunOptions {
   bizDate?: string
   background?: boolean
   forceRefresh?: boolean
+  historyBackfill?: boolean
   signal?: AbortSignal | undefined
   onProgress?: (progress: CollectionProgress) => void | Promise<void>
 }
@@ -49,7 +53,7 @@ export class TmallProbeService {
 
   async getCompletedReport(account: AccountConfig, bizDate: string): Promise<ReportDataset | null> {
     if (account.platform !== 'tmall') return null
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(bizDate)) throw new TypeError('bizDate must use YYYY-MM-DD')
+    if (!isBusinessDate(bizDate)) throw new TypeError('bizDate must use a valid YYYY-MM-DD')
     const reportPath = ['data/report-datasets', 'tmall', account.shop_id, `${bizDate}.json`].join('/')
     return await this.readCompletedReport(reportPath, account, bizDate)
   }
@@ -57,11 +61,14 @@ export class TmallProbeService {
   async run(account: AccountConfig, options: TmallProbeRunOptions = {}): Promise<CollectionProbeResult> {
     if (account.platform !== 'tmall') throw new Error('天猫数据更新只能用于天猫账号')
     const bizDate = options.bizDate ?? shanghaiYesterday()
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(bizDate)) throw new TypeError('bizDate must use YYYY-MM-DD')
+    if (!isBusinessDate(bizDate)) throw new TypeError('bizDate must use a valid YYYY-MM-DD')
     const today = shanghaiToday()
     if (bizDate > today) throw new RangeError(`不能采集未来日期 ${bizDate}`)
     const refreshableToday = bizDate === today
     const runId = options.runId ?? `run_${randomUUID().replaceAll('-', '')}`
+    assertSafeId(runId, 'runId')
+    let acceptingPages = true
+    const checkActive = (): void => { if (!acceptingPages || options.signal?.aborted) throw new CollectionCancelledError('collection') }
     const startedAt = Date.now()
     const progressHistory: CollectionProgress[] = []
     const manifestPath = ['data/runs', 'tmall', account.shop_id, account.account_id, bizDate, `${runId}.json`].join('/')
@@ -106,6 +113,7 @@ export class TmallProbeService {
     const rawPaths: string[] = []
     const persistedPageKeys = new Set<TmallCapturedPage['key']>()
     const persistRawPage = async (page: TmallCapturedPage, index: number, capturedAt: string): Promise<void> => {
+      checkActive()
       if (persistedPageKeys.has(page.key)) return
       await emitProgress('persisting_raw', `正在保存第 ${index + 1}/5 个页面的 Raw 数据：${pageLabel(page.key)}`, index + 1, page.key)
       const path = ['data/raw', 'tmall', account.shop_id, account.account_id, page.key, year, month, day, `${runId}.json`].join('/')
@@ -115,7 +123,7 @@ export class TmallProbeService {
       persistedPageKeys.add(page.key)
     }
     try {
-      const snapshot = await runBoundedOperation(
+      let snapshot = await runBoundedOperation(
         () => (options.background ? this.browserProfiles.collectTmallDailyBackground(account, bizDate, {
           signal: options.signal,
           onProgress: async (phase, pageKey, index) => {
@@ -137,7 +145,7 @@ export class TmallProbeService {
         })),
         {
           phase: 'collection', timeoutMs: TOTAL_COLLECTION_TIMEOUT_MS, signal: options.signal,
-          onStop: () => this.browserProfiles.cancelDailyCollection(account.account_id)
+          onStop: () => { acceptingPages = false; this.browserProfiles.cancelDailyCollection(account.account_id) }
         }
       )
       if (!snapshot) {
@@ -145,9 +153,12 @@ export class TmallProbeService {
         return needLogin(account, runId, bizDate)
       }
       for (const [index, page] of snapshot.pages.entries()) await persistRawPage(page, index, snapshot.capturedAt)
+      checkActive()
+      if (snapshot.bizDate !== bizDate) throw new Error('采集结果业务日期与目标日期不一致')
+      if (options.historyBackfill) snapshot = filterHistorySnapshot(snapshot)
 
       await emitProgress('normalizing', '正在校验并标准化已抓取的数据')
-      const sourceValidation = validateTmallSnapshot(snapshot)
+      const sourceValidation = validateTmallSnapshot(snapshot, options.historyBackfill === true)
       if (sourceValidation.loginRequired) {
         const warning = sourceValidation.warnings.join('；')
         await emitProgress('failed', warning)
@@ -157,17 +168,10 @@ export class TmallProbeService {
       if (sourceValidation.status === 'failed') throw new Error(sourceValidation.warnings.join('；'))
       const normalized = normalizeTmallDaily(snapshot, account)
       attachSourceValidation(normalized.report, sourceValidation)
-      const normalizedPaths: string[] = []
-      for (const value of normalized.datasets) {
-        const path = ['data/normalized', 'tmall', account.shop_id, account.account_id, year, month, day, `${value.dataset}.json`].join('/')
-        const persisted = await this.storage.writeJson(path, value)
-        normalizedPaths.push(persisted.relativePath)
-      }
-      normalized.report.source_paths = [...rawPaths, ...normalizedPaths]
       await emitProgress('persisting_report', '正在原子写入聚合数据和最终报表')
-      const aggregatePath = ['data/aggregate', 'tmall', account.shop_id, account.account_id, year, month, day, 'dashboard.json'].join('/')
-      await this.storage.writeJson(aggregatePath, normalized.report)
-      const reportPersisted = await this.storage.writeJson(reportPath, normalized.report)
+      checkActive()
+      await new TmallHistoryStore(this.storage).commit(account, normalized, rawPaths, runId, options.signal, options.historyBackfill === true)
+      const normalizedPaths = normalized.report.source_paths.filter(path => path.includes('/normalized/'))
       const itemCount = normalized.datasets.find((dataset) => dataset.dataset === 'item_daily')?.rows.length ?? 0
       await emitProgress('completed', `目标日期 ${bizDate} 的数据更新完成`)
 
@@ -179,15 +183,16 @@ export class TmallProbeService {
         pageTitle: '天猫经营数据',
         tableCount: normalized.datasets.length,
         rowCount: itemCount,
-        relativePath: reportPersisted.relativePath,
+        relativePath: reportPath,
         warning: DAILY_WARNING,
         bizDate,
         datasetCount: normalized.datasets.length,
-        dashboardRelativePath: reportPersisted.relativePath,
+        dashboardRelativePath: reportPath,
         normalizedPaths,
         qualityStatus: 'partial'
       }
     } catch (error) {
+      acceptingPages = false
       const cancelled = error instanceof CollectionCancelledError
       await emitProgress(cancelled ? 'cancelled' : 'failed', cancelled ? '用户已取消采集任务' : collectionErrorMessage(error)).catch(() => undefined)
       const fields = { event: 'collection_terminal', runId, accountId: account.account_id, bizDate, elapsedMs: Date.now() - startedAt, err: error }
@@ -228,18 +233,7 @@ export class TmallProbeService {
     const rawPaths = legacyReport.source_paths.filter((path) => path.includes('/raw/'))
     const normalized = normalizeTmallDaily(snapshot, account)
     attachSourceValidation(normalized.report, sourceValidation)
-    const [year = '', month = '', day = ''] = bizDate.split('-')
-    const normalizedPaths: string[] = []
-    for (const value of normalized.datasets) {
-      const existingPath = legacyReport.source_paths.find((path) => path.includes('/normalized/') && path.endsWith(`/${value.dataset}.json`))
-      const path = existingPath ?? ['data/normalized', 'tmall', account.shop_id, account.account_id, year, month, day, `${value.dataset}.json`].join('/')
-      const persisted = await this.storage.writeJson(path, value)
-      normalizedPaths.push(persisted.relativePath)
-    }
-    normalized.report.source_paths = [...rawPaths, ...normalizedPaths]
-    const aggregatePath = ['data/aggregate', 'tmall', account.shop_id, account.account_id, year, month, day, 'dashboard.json'].join('/')
-    await this.storage.writeJson(aggregatePath, normalized.report)
-    await this.storage.writeJson(relativePath, normalized.report)
+    await new TmallHistoryStore(this.storage).commit(account, normalized, rawPaths, `run_${randomUUID().replaceAll('-', '')}`)
     this.logger.info({
       event: 'report_repaired', accountId: account.account_id, shopId: account.shop_id, bizDate,
       fromNormalizerVersion: legacyReport.meta.normalizer_version ?? 'legacy', toNormalizerVersion: TMALL_NORMALIZER_VERSION,
@@ -251,11 +245,11 @@ export class TmallProbeService {
   private async readStoredRawSnapshot(report: ReportDataset, account: AccountConfig, bizDate: string): Promise<TmallDailySnapshot | null> {
     const rawPaths = report.source_paths.filter((path) => path.includes('/raw/'))
     const pages: TmallCapturedPage[] = []
-    let capturedAt = report.generated_at
+    let capturedAt = ''
     for (const rawPath of rawPaths) {
       const raw = await this.storage.readJson<StoredRawEnvelope>(rawPath)
       const pageKey = pageKeyFromDataType(raw.data_type)
-      if (!pageKey || raw.account_id !== account.account_id || raw.shop_id !== account.shop_id || raw.data_date !== bizDate || !isRecord(raw.payload)) continue
+      if (!pageKey || !rawPath.startsWith(`data/raw/tmall/${account.shop_id}/`) || raw.shop_id !== account.shop_id || raw.data_date !== bizDate || !isRecord(raw.payload)) continue
       pages.push({
         key: pageKey,
         sourcePage: raw.source?.page_title ?? pageLabel(pageKey),
@@ -266,7 +260,7 @@ export class TmallProbeService {
     }
     const uniquePages = new Map(pages.map((page) => [page.key, page]))
     if (uniquePages.size !== 5) return null
-    return { bizDate, capturedAt, pages: [...uniquePages.values()] }
+    return { bizDate, capturedAt: capturedAt || report.generated_at, pages: [...uniquePages.values()] }
   }
 }
 

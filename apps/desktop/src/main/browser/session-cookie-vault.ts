@@ -4,7 +4,8 @@ import { resolve } from 'node:path'
 import type { Cookie, Cookies } from 'electron'
 import type { AccountConfig } from '@ecommerce/shared'
 
-const SNAPSHOT_VERSION = 1
+const SNAPSHOT_VERSION = 2
+const LEGACY_SNAPSHOT_VERSION = 1
 const MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
 const MAX_COOKIE_COUNT = 4096
 
@@ -26,10 +27,18 @@ interface SessionCookieRecord {
   secure: boolean
   httpOnly: boolean
   sameSite: Cookie['sameSite']
+  expirationDate?: number
 }
 
 interface SessionCookieSnapshot {
   version: typeof SNAPSHOT_VERSION
+  account_id: string
+  captured_at: string
+  cookies: SessionCookieRecord[]
+}
+
+interface LegacySessionCookieSnapshot {
+  version: typeof LEGACY_SNAPSHOT_VERSION
   cookies: SessionCookieRecord[]
 }
 
@@ -53,22 +62,39 @@ export class SessionCookieVault {
       }
       if (encrypted.byteLength > MAX_SNAPSHOT_BYTES) throw new Error('Encrypted session cookie snapshot is too large')
 
-      const snapshot = parseSnapshot(this.encryption.decrypt(encrypted), account.allowed_hosts)
-      for (const cookie of snapshot.cookies) await cookieStore.set(cookie)
-      return snapshot.cookies.length
+      const snapshot = parseSnapshot(this.encryption.decrypt(encrypted), account.account_id, account.allowed_hosts)
+      let restored = 0
+      for (const cookie of snapshot.cookies) {
+        if (isExpired(cookie)) continue
+        try {
+          await cookieStore.set(cookie)
+          restored += 1
+        } catch {
+          // A stale or platform-incompatible cookie must not block the rest of the valid session.
+        }
+      }
+      return restored
     })
   }
 
   async snapshot(account: AccountConfig, cookieStore: SessionCookieStore): Promise<number> {
     return this.enqueue(account.account_id, async () => {
       if (!this.encryption.isAvailable()) return 0
+      const now = Date.now() / 1000
       const cookies = (await cookieStore.get({}))
         .filter((cookie): cookie is DomainCookie => Boolean(
-          cookie.session && cookie.domain && isAllowedCookieDomain(cookie.domain, account.allowed_hosts)
+          cookie.domain &&
+          isAllowedCookieDomain(cookie.domain, account.allowed_hosts) &&
+          (cookie.session || !cookie.expirationDate || cookie.expirationDate > now)
         ))
         .slice(0, MAX_COOKIE_COUNT)
         .map(toSessionCookieRecord)
-      const snapshot: SessionCookieSnapshot = { version: SNAPSHOT_VERSION, cookies }
+      const snapshot: SessionCookieSnapshot = {
+        version: SNAPSHOT_VERSION,
+        account_id: account.account_id,
+        captured_at: new Date().toISOString(),
+        cookies
+      }
       const encrypted = this.encryption.encrypt(JSON.stringify(snapshot))
       if (encrypted.byteLength > MAX_SNAPSHOT_BYTES) throw new Error('Encrypted session cookie snapshot is too large')
 
@@ -119,7 +145,7 @@ function toSessionCookieRecord(cookie: DomainCookie): SessionCookieRecord {
   const domain = cookie.domain.trim().toLowerCase()
   const host = domain.replace(/^\.+/, '')
   const path = cookie.path?.startsWith('/') ? cookie.path : '/'
-  return {
+  const record: SessionCookieRecord = {
     url: `${cookie.secure ? 'https' : 'http'}://${host}${path}`,
     name: cookie.name,
     value: cookie.value,
@@ -129,19 +155,28 @@ function toSessionCookieRecord(cookie: DomainCookie): SessionCookieRecord {
     httpOnly: cookie.httpOnly ?? false,
     sameSite: cookie.sameSite
   }
+  if (!cookie.session && typeof cookie.expirationDate === 'number' && Number.isFinite(cookie.expirationDate)) {
+    record.expirationDate = cookie.expirationDate
+  }
+  return record
 }
 
-function parseSnapshot(value: string, allowedHosts: readonly string[]): SessionCookieSnapshot {
+function parseSnapshot(value: string, accountId: string, allowedHosts: readonly string[]): SessionCookieSnapshot | LegacySessionCookieSnapshot {
   const candidate: unknown = JSON.parse(value)
-  if (!isRecord(candidate) || candidate['version'] !== SNAPSHOT_VERSION || !Array.isArray(candidate['cookies'])) {
+  if (!isRecord(candidate) || !Array.isArray(candidate['cookies'])) {
     throw new Error('Invalid session cookie snapshot')
   }
+  const version = candidate['version']
+  if (version !== SNAPSHOT_VERSION && version !== LEGACY_SNAPSHOT_VERSION) throw new Error('Invalid session cookie snapshot')
+  if (version === SNAPSHOT_VERSION && candidate['account_id'] !== accountId) throw new Error('Session cookie snapshot account mismatch')
   if (candidate['cookies'].length > MAX_COOKIE_COUNT) throw new Error('Session cookie snapshot contains too many cookies')
   const cookies = candidate['cookies'].map(parseCookieRecord)
   if (cookies.some((cookie) => !isAllowedCookieDomain(cookie.domain, allowedHosts))) {
     throw new Error('Session cookie snapshot contains a disallowed domain')
   }
-  return { version: SNAPSHOT_VERSION, cookies }
+  return version === SNAPSHOT_VERSION
+    ? { version, account_id: accountId, captured_at: requireString(candidate, 'captured_at'), cookies }
+    : { version, cookies }
 }
 
 function parseCookieRecord(value: unknown): SessionCookieRecord {
@@ -150,7 +185,11 @@ function parseCookieRecord(value: unknown): SessionCookieRecord {
   if (!['unspecified', 'no_restriction', 'lax', 'strict'].includes(String(sameSite))) {
     throw new Error('Invalid session cookie same-site policy')
   }
-  const record = {
+  const expirationDate = value['expirationDate']
+  if (expirationDate !== undefined && (typeof expirationDate !== 'number' || !Number.isFinite(expirationDate) || expirationDate <= 0)) {
+    throw new Error('Invalid session cookie expiration date')
+  }
+  const record: SessionCookieRecord = {
     url: requireString(value, 'url'),
     name: requireString(value, 'name'),
     value: requireString(value, 'value'),
@@ -160,12 +199,17 @@ function parseCookieRecord(value: unknown): SessionCookieRecord {
     httpOnly: requireBoolean(value, 'httpOnly'),
     sameSite: sameSite as Cookie['sameSite']
   }
+  if (typeof expirationDate === 'number') record.expirationDate = expirationDate
   const url = new URL(record.url)
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Invalid session cookie URL')
   if (record.name.length > 4096 || record.value.length > 16_384 || record.domain.length > 253 || record.path.length > 2048) {
     throw new Error('Session cookie record exceeds safe limits')
   }
   return record
+}
+
+function isExpired(cookie: SessionCookieRecord): boolean {
+  return typeof cookie.expirationDate === 'number' && cookie.expirationDate <= Date.now() / 1000
 }
 
 function requireString(value: Record<string, unknown>, key: string): string {

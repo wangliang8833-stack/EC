@@ -3,6 +3,20 @@ import type { AiDecisionInput, AiDecisionModule, AiGenerateRequest, CsvExportReq
 import { IPC_CHANNELS } from '../main/ipc/channels.js'
 
 const desktopApi: DesktopApi = {
+  history: {
+    preview: input => ipcRenderer.invoke(IPC_CHANNELS.historyPreview, input),
+    create: input => ipcRenderer.invoke(IPC_CHANNELS.historyCreate, input),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.historyList),
+    pause: jobId => ipcRenderer.invoke(IPC_CHANNELS.historyPause, jobId),
+    resume: jobId => ipcRenderer.invoke(IPC_CHANNELS.historyResume, jobId),
+    cancel: jobId => ipcRenderer.invoke(IPC_CHANNELS.historyCancel, jobId),
+    retryFailed: jobId => ipcRenderer.invoke(IPC_CHANNELS.historyRetry, jobId),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, job: Parameters<typeof listener>[0]) => listener(job)
+      ipcRenderer.on(IPC_CHANNELS.historyChanged, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.historyChanged, handler)
+    }
+  },
   accounts: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.accountsList),
     create: (input) => ipcRenderer.invoke(IPC_CHANNELS.accountsCreate, input),

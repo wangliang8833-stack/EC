@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Cookie } from 'electron'
@@ -54,20 +54,21 @@ function cookie(overrides: Partial<Cookie> = {}): Cookie {
 }
 
 describe('SessionCookieVault', () => {
-  it('encrypts only allowlisted session cookies and restores them without an expiry', async () => {
+  it('encrypts allowlisted session and persistent cookies while preserving persistent expiry', async () => {
     const root = await mkdtemp(join(tmpdir(), 'session-cookie-vault-'))
     const vault = new SessionCookieVault(root, encryption())
     const get = vi.fn(async () => [
       cookie(),
       cookie({ name: 'persistent', session: false, expirationDate: 2_000_000_000 }),
+      cookie({ name: 'expired', session: false, expirationDate: 1 }),
       cookie({ name: 'outside', domain: '.example.com' })
     ])
     const set = vi.fn(async (_details: unknown) => undefined)
 
-    await expect(vault.snapshot(account, { get, set } as never)).resolves.toBe(1)
+    await expect(vault.snapshot(account, { get, set } as never)).resolves.toBe(2)
     const stored = await readFile(join(root, 'Session Cookie Snapshots', `${account.account_id}.bin`), 'utf8')
     expect(stored).not.toContain('sensitive-value')
-    await expect(vault.restore(account, { get, set } as never)).resolves.toBe(1)
+    await expect(vault.restore(account, { get, set } as never)).resolves.toBe(2)
     expect(set).toHaveBeenCalledWith(expect.objectContaining({
       url: 'https://taobao.com/',
       name: 'login_session',
@@ -76,6 +77,40 @@ describe('SessionCookieVault', () => {
       httpOnly: true
     }))
     expect(set.mock.calls[0]?.[0]).not.toHaveProperty('expirationDate')
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'persistent',
+      expirationDate: 2_000_000_000
+    }))
+    expect(set).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'expired' }))
+  })
+
+  it('continues restoring valid cookies when one cookie is rejected by Chromium', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'session-cookie-vault-partial-'))
+    const vault = new SessionCookieVault(root, encryption())
+    const get = vi.fn(async () => [cookie({ name: 'rejected' }), cookie({ name: 'restored' })])
+    const set = vi.fn(async (details: { name: string }) => {
+      if (details.name === 'rejected') throw new Error('cookie rejected')
+    })
+
+    await vault.snapshot(account, { get, set } as never)
+    await expect(vault.restore(account, { get, set } as never)).resolves.toBe(1)
+    expect(set).toHaveBeenCalledTimes(2)
+  })
+
+  it('restores version 1 session-cookie snapshots created by earlier releases', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'session-cookie-vault-v1-'))
+    const directory = join(root, 'Session Cookie Snapshots')
+    await mkdir(directory, { recursive: true })
+    const legacy = {
+      version: 1,
+      cookies: [{ url: 'https://taobao.com/', name: 'legacy', value: 'value', domain: '.taobao.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax' }]
+    }
+    await writeFile(join(directory, `${account.account_id}.bin`), encryption().encrypt(JSON.stringify(legacy)))
+    const set = vi.fn(async () => undefined)
+
+    const vault = new SessionCookieVault(root, encryption())
+    await expect(vault.restore(account, { get: vi.fn(), set } as never)).resolves.toBe(1)
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ name: 'legacy' }))
   })
 
   it('does not persist secrets when OS encryption is unavailable', async () => {

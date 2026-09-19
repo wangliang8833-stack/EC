@@ -1,5 +1,6 @@
 import type { AccountConfig, ReportDataset } from '@ecommerce/shared'
 import type { TmallDailySnapshot } from '../../browser/browser-profile-manager.js'
+import { endpointMatchesDate } from './tmall-source-validation.js'
 
 export interface NormalizedDataset {
   schema_version: '1.0.0'
@@ -23,7 +24,7 @@ export interface TmallNormalizedResult {
   report: ReportDataset
 }
 
-export const TMALL_NORMALIZER_VERSION = 'tmall-0.5.3'
+export const TMALL_NORMALIZER_VERSION = 'tmall-0.7.0'
 
 const BASE_COVERAGE_WARNINGS = [
   '流量来源与搜索词来自生意参谋 Top 列表，未能证明覆盖全部分页。',
@@ -46,16 +47,21 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
   // getYesterdayTrade.json returns payAmt in fen; portal/flow and all normalized datasets use yuan.
   const ad = bestRecord(endpointBody(snapshot, 'store', '/portal/board/grow/factor/overview.json'), ['totalPromoSpend', 'clicks', 'portalAdPayAmt', 'tROI'])
   const itemRows = bestRows(endpointBody(snapshot, 'item', '/cc/item/view/top.json'), ['itemId', 'title', 'payAmt', 'itmUv'])
-  const itemPayAmt = itemRows.reduce((sum, row) => sum + numberOrZero(metric(row, 'payAmt')), 0)
+  const itemPayAmt = sumKnown(itemRows.map((row) => metric(row, 'payAmt')))
   const payAmtYuan = isToday
-    ? metric(home, 'payAmt') ?? metric(flow, 'payAmt') ?? itemPayAmt
-    : (isYesterday ? fenMetric(trade, 'payAmt') : null) ?? metric(flow, 'payAmt') ?? metric(home, 'payAmt') ?? itemPayAmt
+    ? metric(home, 'payAmt') ?? metric(flow, 'payAmt')
+    : (isYesterday ? fenMetric(trade, 'payAmt') : null) ?? metric(flow, 'payAmt') ?? metric(home, 'payAmt')
   const itemRefundValues = itemRows.map((row) => metric(row, 'sucRefundAmt')).filter((value): value is number => value !== null)
   // 商品接口只返回 Top 列表：全为 0 不能证明全店退款为 0；仅在出现正退款时作为部分覆盖的下限值。
   const itemRefundAmt = itemRefundValues.some((value) => value > 0) ? itemRefundValues.reduce((sum, value) => sum + value, 0) : null
   const storeRefundAmt = firstMetric(home, ['rfdSucAmt', 'portalShopSucRfdAmt'])
-  const refundAmt = storeRefundAmt ?? itemRefundAmt
-  const refundRate = firstMetric(home, ['payAmtRfdRate']) ?? (refundAmt !== null && payAmtYuan > 0 ? refundAmt / payAmtYuan : null)
+  const refundAmt = storeRefundAmt
+  const platformRefundRate = ratioMetric(home, 'payAmtRfdRate')
+  // 原支付周期归因数据尚未接入；当日成功退款/当日支付不能写入 refund_rate。
+  const refundRate = null
+  const dailyRefundPayRatio = divide(refundAmt, payAmtYuan)
+  const payLowerBound = payAmtYuan === null ? itemPayAmt : null
+  const refundLowerBound = refundAmt === null ? itemRefundAmt : null
   const sourceRows = bestRows(endpointBody(snapshot, 'flow', '/flow/v3/overview/shopFlowSourceTop/v4.json'), ['uv', 'pv', 'payAmt'], ['sourceName', 'sourceName1', 'pageName'])
   const keywordRows = bestRows(endpointBody(snapshot, 'flow', '/flow/new/overview/keywordTop.json'), ['keyword', 'uv', 'pv'])
   const serviceOverview = bestRows(endpointBody(snapshot, 'service', '/csp/api/core/monitor/overview/list'), [], ['name', 'indexName', 'title'])
@@ -75,16 +81,20 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
     visitor_count: metric(store, 'uv'),
     page_view_count: metric(store, 'pv'),
     item_visitor_count: metric(store, 'itmUv'),
-    pay_rate: metric(store, 'payRate'),
+    pay_rate: ratioMetric(store, 'payRate'),
     cart_buyer_count: firstMetric(store, ['addCartBuyerCnt', 'cartByrCnt']),
     favorite_buyer_count: firstMetric(store, ['favBuyerCnt', 'cltByrCnt']),
-    bounce_rate: metric(store, 'bounceRate'),
+    bounce_rate: ratioMetric(store, 'bounceRate'),
     average_page_views: metric(store, 'avgPv'),
     average_stay_seconds: metric(store, 'stayTime'),
     new_visitor_count: metric(store, 'newUv'),
     returning_visitor_count: metric(store, 'oldUv'),
     refund_amt: refundAmt,
-    refund_rate: refundRate
+    refund_rate: refundRate,
+    platform_refund_rate: platformRefundRate,
+    daily_refund_pay_ratio: dailyRefundPayRatio,
+    pay_amt_lower_bound: payLowerBound,
+    refund_amt_lower_bound: refundLowerBound
   }
   const normalizedItems = itemRows.map((row) => {
     const item = isRecord(row['item']) ? row['item'] : {}
@@ -97,14 +107,14 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
     refund_amt: metric(row, 'sucRefundAmt'),
     pay_item_count: metric(row, 'payItmCnt'),
     pay_buyer_count: metric(row, 'payByrCnt'),
-    pay_rate: metric(row, 'payRate'),
+    pay_rate: ratioMetric(row, 'payRate'),
     visitor_count: metric(row, 'itmUv'),
     page_view_count: metric(row, 'itmPv'),
     search_visitor_count: metric(row, 'seGuideUv'),
     cart_buyer_count: metric(row, 'itemCartByrCnt'),
     favorite_buyer_count: metric(row, 'itemCltByrCnt'),
     average_stay_seconds: metric(row, 'itmStayTime'),
-    bounce_rate: metric(row, 'itmBounceRate'),
+    bounce_rate: ratioMetric(row, 'itmBounceRate'),
     ad_spend: metric(row, 'fCharge'),
     ad_roi: metric(row, 'pDROI')
   }})
@@ -116,7 +126,7 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
     cart_buyer_count: metric(row, 'cartByrCnt'),
     pay_buyer_count: firstMetric(row, ['itmPayByrCnt', 'payByrCnt']),
     pay_amt: metric(row, 'payAmt'),
-    pay_rate: metric(row, 'payRate')
+    pay_rate: ratioMetric(row, 'payRate')
   }))
   const normalizedKeywords = keywordRows.map((row) => ({
     biz_date: snapshot.bizDate,
@@ -124,10 +134,13 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
     visitor_count: metric(row, 'uv'),
     page_view_count: metric(row, 'pv'),
     cart_buyer_count: firstMetric(row, ['crtByrCnt', 'cartByrCnt']),
-    cart_rate: firstMetric(row, ['crtRate', 'cartRate']),
+    cart_rate: ratioMetric(row, 'crtRate') ?? ratioMetric(row, 'cartRate'),
     pay_amt: metric(row, 'payAmt')
   }))
-  const normalizedService = [...serviceOverview, ...serviceList].map((row) => flattenMetricRow(row, snapshot.bizDate))
+  const normalizedService = [
+    ...normalizeServiceRows(serviceOverview, snapshot.bizDate, '概览'),
+    ...normalizeServiceRows(serviceList, snapshot.bizDate, '日明细')
+  ]
   const adRow = {
     biz_date: snapshot.bizDate,
     campaign_name: '生意参谋广告汇总（非计划级）',
@@ -140,11 +153,23 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
     biz_date: snapshot.bizDate,
     success_refund_amt: refundAmt,
     refund_rate: refundRate,
-    source: storeRefundAmt !== null ? '生意参谋店铺汇总' : itemRefundAmt !== null ? '生意参谋商品 Top 退款下限' : '生意参谋未返回店铺级退款汇总'
+    platform_refund_rate: platformRefundRate,
+    daily_refund_pay_ratio: dailyRefundPayRatio,
+    refund_amt_lower_bound: refundLowerBound,
+    source: storeRefundAmt !== null ? '生意参谋店铺汇总' : itemRefundAmt !== null ? '生意参谋商品 Top 退款下限（非全店总额）' : '生意参谋未返回店铺级退款汇总'
   }
   const refundWarning = refundAmt === null
-    ? '所选日期未返回店铺级成功退款汇总；商品 Top 列表不能证明全店退款为 0，当前按缺失处理。'
+    ? refundLowerBound !== null
+      ? `店铺级成功退款汇总缺失；商品 Top 已知退款下限 ¥${refundLowerBound.toFixed(2)}，不代表全店退款总额。`
+      : '所选日期未返回店铺级成功退款汇总；商品 Top 列表不能证明全店退款为 0，当前按缺失处理。'
     : '已采集成功退款金额汇总；订单与退款售后明细尚未接入千牛导出。'
+  if (payAmtYuan === null) sourceWarnings.push(payLowerBound !== null
+    ? `店铺支付汇总缺失；商品 Top 已知支付下限 ¥${payLowerBound.toFixed(2)}，不代表全店支付总额。`
+    : '店铺支付金额未返回，按缺失处理。')
+  for (const [key, label] of [['pay_order_count', '支付子订单数'], ['pay_buyer_count', '支付买家数'], ['visitor_count', '访客数']] as const) {
+    if (storeRow[key] === null) sourceWarnings.push(`${label}未返回，相关指标按缺失处理。`)
+  }
+  if (adRow.spend === null) sourceWarnings.push('广告消耗未返回，广告消耗及整体投产比按缺失处理。')
   const coverageWarnings = [...sourceWarnings, BASE_COVERAGE_WARNINGS[0]!, refundWarning, ...BASE_COVERAGE_WARNINGS.slice(1)]
 
   const definitions: Array<[string, string[], Array<Record<string, string | number | null>>, string[]]> = [
@@ -152,17 +177,17 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
     ['item_daily', ['biz_date', 'item_id'], normalizedItems, []],
     ['traffic_source_daily', ['biz_date', 'source_name'], normalizedSources, ['Top 列表，可能不含全部来源。']],
     ['search_keyword_daily', ['biz_date', 'keyword'], normalizedKeywords, ['Top 列表，可能不含全部搜索词。']],
-    ['service_daily', ['biz_date'], normalizedService, ['部分客服指标为延迟统计。']],
+    ['service_daily', ['biz_date', 'service_account', 'service_source', 'metric_key'], normalizedService, ['部分客服指标为延迟统计；未映射字段保留原字段名。']],
     ['ad_account_daily', ['biz_date'], [adRow], ['仅账户级汇总，不代表广告计划明细。']],
     ['refund_summary_daily', ['biz_date'], [refundRow], [refundWarning]]
   ]
   const datasets = definitions.map(([name, dimensions, rows, warnings]) => dataset(account, snapshot, name, dimensions, rows, warnings))
-  const payAmt = numberOrZero(storeRow.pay_amt)
-  const visitorCount = numberOrZero(storeRow.visitor_count)
-  const payBuyerCount = numberOrZero(storeRow.pay_buyer_count)
-  const payRate = nullableNumber(storeRow.pay_rate) ?? (visitorCount > 0 ? payBuyerCount / visitorCount : 0)
-  const adSpend = numberOrZero(adRow.spend)
-  const adPayAmt = numberOrZero(adRow.attributed_pay_amt)
+  const payAmt = storeRow.pay_amt
+  const visitorCount = storeRow.visitor_count
+  const payBuyerCount = storeRow.pay_buyer_count
+  const payRate = visitorCount === 0 ? null : storeRow.pay_rate ?? divide(payBuyerCount, visitorCount)
+  const adSpend = adRow.spend
+  const adPayAmt = adRow.attributed_pay_amt
   const generatedAt = new Date().toISOString()
   const report: ReportDataset = {
     schema_version: '1.0.0',
@@ -181,21 +206,25 @@ export function normalizeTmallDaily(snapshot: TmallDailySnapshot, account: Accou
     },
     summary: {
       pay_amt: payAmt,
-      pay_order_count: numberOrZero(storeRow.pay_order_count),
+      pay_order_count: storeRow.pay_order_count,
       pay_buyer_count: payBuyerCount,
-      pay_item_count: numberOrZero(storeRow.pay_item_count),
+      pay_item_count: storeRow.pay_item_count,
       visitor_count: visitorCount,
-      page_view_count: numberOrZero(storeRow.page_view_count),
+      page_view_count: storeRow.page_view_count,
       pay_rate: payRate,
-      customer_unit_price: payBuyerCount > 0 ? payAmt / payBuyerCount : 0,
+      customer_unit_price: divide(payAmt, payBuyerCount),
       refund_amt: refundAmt,
       refund_rate: refundRate,
+      platform_refund_rate: platformRefundRate,
+      daily_refund_pay_ratio: dailyRefundPayRatio,
+      pay_amt_lower_bound: payLowerBound,
+      refund_amt_lower_bound: refundLowerBound,
       ad_spend: adSpend,
       ad_pay_amt: adPayAmt,
-      ad_roi: adSpend > 0 ? payAmt / adSpend : null,
+      ad_roi: divide(payAmt, adSpend),
       platform_ad_roi: nullableNumber(adRow.roi)
     },
-    trend: [{ date: snapshot.bizDate, pay_amt: payAmt, refund_amt: refundAmt, visitor_count: visitorCount, pay_order_count: numberOrZero(storeRow.pay_order_count), ad_spend: adSpend }],
+    trend: [{ date: snapshot.bizDate, pay_amt: payAmt, refund_amt: refundAmt, visitor_count: visitorCount, pay_order_count: storeRow.pay_order_count, ad_spend: adSpend }],
     shop_rows: normalizedItems,
     sections: {
       channels: normalizedSources,
@@ -246,6 +275,9 @@ function endpointBusinessErrorMessage(value: unknown): string | null {
 function endpointBody(snapshot: TmallDailySnapshot, pageKey: TmallDailySnapshot['pages'][number]['key'], path: string): unknown {
   const endpoint = snapshot.pages.find((page) => page.key === pageKey)?.endpoints[path]
   if (!isRecord(endpoint) || endpoint['ok'] !== true) return null
+  if (!endpointMatchesDate(path, endpoint, snapshot)) return null
+  const body = endpoint['body']
+  if (isRecord(body) && body['code'] !== undefined && ![0, 200, '0', '200'].includes(body['code'] as number | string)) return null
   return endpoint['body']
 }
 
@@ -297,28 +329,48 @@ function walkArrays(value: unknown, visit: (rows: unknown[]) => void): void {
 }
 
 function metric(row: Record<string, unknown>, key: string): number | null { return toNumber(row[key]) }
+function ratioMetric(row: Record<string, unknown>, key: string): number | null {
+  const raw = unwrap(row[key])
+  if (typeof raw === 'string' && raw.trim().endsWith('%')) {
+    const value = toNumber(raw.trim().slice(0, -1))
+    return value === null ? null : value / 100
+  }
+  return toNumber(raw)
+}
 function fenMetric(row: Record<string, unknown>, key: string): number | null { const value = metric(row, key); return value === null ? null : Math.round(value) / 100 }
 function firstMetric(row: Record<string, unknown>, keys: string[]): number | null { for (const key of keys) { const value = metric(row, key); if (value !== null) return value } return null }
 function textMetric(row: Record<string, unknown>, keys: string[]): string | null { for (const key of keys) { const value = unwrap(row[key]); if (typeof value === 'string' || typeof value === 'number') return String(value) } return null }
 function unwrap(value: unknown): unknown { return isRecord(value) && 'value' in value ? value['value'] : value }
-function toNumber(value: unknown): number | null { const unwrapped = unwrap(value); if (typeof unwrapped === 'number' && Number.isFinite(unwrapped)) return unwrapped; if (typeof unwrapped === 'string') { const parsed = Number(unwrapped.replaceAll(',', '').replace('%', '')); return Number.isFinite(parsed) ? parsed : null } return null }
+function toNumber(value: unknown): number | null { const unwrapped = unwrap(value); if (typeof unwrapped === 'number' && Number.isFinite(unwrapped)) return unwrapped; if (typeof unwrapped === 'string' && unwrapped.trim()) { const parsed = Number(unwrapped.replaceAll(',', '')); return Number.isFinite(parsed) ? parsed : null } return null }
 function nullableNumber(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) ? value : null }
-function numberOrZero(value: unknown): number { return nullableNumber(value) ?? 0 }
+function divide(numerator: number | null, denominator: number | null): number | null { return numerator !== null && denominator !== null && denominator > 0 ? numerator / denominator : null }
+function sumKnown(values: Array<number | null>): number | null { const known = values.filter((value): value is number => value !== null); return known.length > 0 ? known.reduce((sum, value) => sum + value, 0) : null }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 
-function flattenMetricRow(row: Record<string, unknown>, bizDate: string): Record<string, string | number | null> {
-  const result: Record<string, string | number | null> = { biz_date: bizDate }
-  for (const [key, raw] of Object.entries(row)) {
-    const value = unwrap(raw)
-    if (typeof value === 'string' || typeof value === 'number' || value === null) result[key] = value
-  }
-  return result
+function normalizeServiceRows(rows: Record<string, unknown>[], bizDate: string, source: string): Array<Record<string, string | number | null>> {
+  const metadataKeys = new Set(['date', 'biz_date', 'statDate', 'serviceAccount', 'service_account', 'serviceName', 'accountName', 'accountId', 'id', 'name', 'indexName', 'title', 'indexCode', 'unit'])
+  return rows.flatMap((row) => {
+    const date = textMetric(row, ['date', 'biz_date', 'statDate'])
+    if (date && date.replaceAll('-', '') !== bizDate.replaceAll('-', '')) return []
+    const base = { biz_date: bizDate, service_account: textMetric(row, ['serviceAccount', 'service_account', 'serviceName', 'accountName', 'accountId']), service_source: source }
+    const name = textMetric(row, ['name', 'indexName', 'title'])
+    if (name && 'value' in row) {
+      const value = unwrap(row['value'])
+      return [{ ...base, metric_key: textMetric(row, ['indexCode']) ?? name, name, value: typeof value === 'string' || typeof value === 'number' ? value : null, unit: textMetric(row, ['unit']) }]
+    }
+    return Object.entries(row).flatMap(([key, raw]) => {
+      if (metadataKeys.has(key)) return []
+      const value = unwrap(raw)
+      if (typeof value !== 'number' && typeof value !== 'string' && value !== null) return []
+      return [{ ...base, metric_key: key, name: `${key}（未映射）`, value, unit: null }]
+    })
+  })
 }
 
-function buildAlerts(visitorCount: number, payAmt: number, refundAmt: number | null, adSpend: number): Array<Record<string, string | number | null>> {
+function buildAlerts(visitorCount: number | null, payAmt: number | null, refundAmt: number | null, adSpend: number | null): Array<Record<string, string | number | null>> {
   const alerts: Array<Record<string, string | number | null>> = []
-  if (visitorCount < 10) alerts.push({ level: 'warning', title: '所选日期访客量较低', detail: `生意参谋记录访客 ${visitorCount} 人，请结合店铺实际经营状态核对。` })
-  if (adSpend > 0 && payAmt === 0) alerts.push({ level: 'warning', title: '广告有消耗但未归因成交', detail: `所选日期广告消耗 ¥${adSpend.toFixed(2)}，支付金额为 0。` })
+  if (visitorCount !== null && visitorCount < 10) alerts.push({ level: 'warning', title: '所选日期访客量较低', detail: `生意参谋记录访客 ${visitorCount} 人，请结合店铺实际经营状态核对。` })
+  if (adSpend !== null && adSpend > 0 && payAmt === 0) alerts.push({ level: 'warning', title: '广告有消耗但店铺无支付', detail: `所选日期广告消耗 ¥${adSpend.toFixed(2)}，店铺支付金额为 0。` })
   if (refundAmt !== null && refundAmt > 0) alerts.push({ level: 'warning', title: '存在成功退款', detail: `所选日期成功退款金额为 ¥${refundAmt.toFixed(2)}，请结合售后明细核对原因。` })
   alerts.push({ level: 'info', title: '数据尚未完全覆盖', detail: '订单明细、退款售后明细、广告计划明细和结算数据待后续接入。' })
   return alerts

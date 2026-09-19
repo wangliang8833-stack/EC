@@ -7,8 +7,14 @@ import { markNotificationsRead, upsertNotification, type AppNotification, type N
 import { ProductReport } from './ProductReport.js'
 import { PromotionReport } from './PromotionReport.js'
 import { RoiCalculator } from './RoiCalculator.js'
-import { AiAnalyticsView, AiOperationsView, AiSelectionView } from './AiWorkspace.js'
+import { AiOperationsView, AiSelectionView } from './AiWorkspace.js'
+import { CommerceAnalyticsView } from './CommerceAnalyticsView.js'
 import { AiModelSettingsPanel } from './AiModelSettingsPanel.js'
+import { DashboardReportTable } from './DashboardReportTable.js'
+import { HistoryBackfillPanel, useHistoryRevision } from './HistoryBackfillPanel.js'
+import { dashboardMoney as currency, dashboardPercent as percent, dashboardInteger as integer, lowerBoundNote, metricCoverage, startDashboardQuery } from './dashboard-report-model.js'
+import { dashboardDates, dashboardRangeLabel, type DashboardPeriod } from '@ecommerce/shared'
+import { DashboardDateControls, DashboardCoverageNotice } from './DashboardDateControls.js'
 
 type ViewKey = 'overview' | 'product-report' | 'promotion-report' | 'roi-calculator' | 'ai-selection' | 'ai-operations' | 'ai-analysis' | 'quality' | 'jobs' | 'accounts' | 'settings' | 'help'
 type ShopAction = 'open' | 'check' | 'probe'
@@ -33,7 +39,7 @@ const navGroups: NavGroup[] = [
   { key: 'roi-calculator', label: 'ROI计算器', icon: 'calculator', view: 'roi-calculator', children: [] },
   { key: 'ai-selection', label: 'AI选品', icon: 'database', view: 'ai-selection', children: [] },
   { key: 'ai-operations', label: 'AI自动运营', icon: 'tasks', view: 'ai-operations', children: [] },
-  { key: 'ai-analysis', label: 'AI数据分析', icon: 'chart', view: 'ai-analysis', children: [] },
+  { key: 'ai-analysis', label: '数据分析', icon: 'chart', view: 'ai-analysis', children: [] },
   { key: 'shops', label: '店铺列表', icon: 'shop', children: [] }
 ]
 
@@ -394,17 +400,17 @@ export function App(): React.JSX.Element {
         </aside>
 
         <main className={`main-canvas ${activeShop ? 'shop-workspace-active' : ''}`}>{activeShop ? <ShopWorkspace account={activeShop} isPreview={isBrowserPreview} action={workspaceAction} progress={collectionProgress[activeShop.accountId] ?? null} closing={workspaceClosing} onReady={handleWorkspaceReady} onCheck={() => void runWorkspaceAction(activeShop, 'check')} onProbe={() => void runWorkspaceAction(activeShop, 'probe')} onCancel={() => void cancelCollection(activeShop)} onBack={() => void leaveShopWorkspace(activeShop)} onError={(reason) => notify({ id: `workspace:${activeShop.accountId}:browser-error`, tone: 'error', title: '店铺后台打开失败', description: errorMessage(reason) })} /> : <div className="content-container">
-          <div className="page-heading">
-            <div><div className="breadcrumb">工作台 / {activeLabel}</div><h1>{activeLabel === '销售总览' ? '多平台销售看板' : activeLabel}</h1><p>{activeView === 'overview' ? '按自然日查看全部有效店铺经营数据' : activeView === 'product-report' ? '查看商品流量、成交、退款与经营机会' : activeView === 'promotion-report' ? '查看推广消耗、成交归因、计划覆盖与数据质量' : activeView === 'roi-calculator' ? '测算商品推广的保本 ROAS、盈利周期与逐月现金流' : activeView === 'ai-selection' ? '基于真实商品事实进行可解释评分，并由大模型解读候选机会' : activeView === 'ai-operations' ? '以规则 Signal、策略校验和人工审批驱动安全运营建议' : activeView === 'ai-analysis' ? '统一指标诊断、异常发现与有证据的 AI 问数' : activeView === 'settings' ? '管理数据目录、AI 大模型、程序环境与远程服务' : activeView === 'jobs' ? '管理自动采集时间、平台范围与批次执行策略' : activeView === 'help' ? '了解系统核心功能、业务架构与使用支持' : '阶段 0 本地管理工作台'}</p></div>
+          {activeView !== 'overview' ? <div className="page-heading">
+            <div><div className="breadcrumb">工作台 / {activeLabel}</div><h1>{activeLabel}</h1><p>{activeView === 'product-report' ? '查看商品流量、成交、退款与经营机会' : activeView === 'promotion-report' ? '查看推广消耗、成交归因、计划覆盖与数据质量' : activeView === 'roi-calculator' ? '测算商品推广的保本 ROAS、盈利周期与逐月现金流' : activeView === 'ai-selection' ? '基于真实商品事实进行可解释评分，并由大模型解读候选机会' : activeView === 'ai-operations' ? '以规则 Signal、策略校验和人工审批驱动安全运营建议' : activeView === 'ai-analysis' ? '基于本地分析模板生成经营诊断、执行建议与 HTML 报告' : activeView === 'settings' ? '管理数据目录、AI 大模型、程序环境与远程服务' : activeView === 'jobs' ? '管理自动采集时间、平台范围与批次执行策略' : activeView === 'help' ? '了解系统核心功能、业务架构与使用支持' : '阶段 0 本地管理工作台'}</p></div>
             {activeView === 'settings' || activeView === 'help' || activeView.startsWith('ai-') ? null : <div className="heading-actions"><span className="demo-badge">{activeView === 'roi-calculator' ? '本地计算' : isBrowserPreview ? '演示数据' : '本地数据'}</span>{activeView === 'roi-calculator' ? null : <Button icon={<Icon name="download" />} disabled>导出 CSV</Button>}</div>}
-          </div>
+          </div> : null}
           {activeView === 'overview' ? <Dashboard accounts={accounts} isPreview={isBrowserPreview} progress={collectionProgress} onNotify={notify} /> : null}
           {activeView === 'product-report' ? <ProductReport accounts={accounts} isPreview={isBrowserPreview} onNotify={notify} /> : null}
           {activeView === 'promotion-report' ? <PromotionReport accounts={accounts} isPreview={isBrowserPreview} onNotify={notify} /> : null}
           {activeView === 'roi-calculator' ? <RoiCalculator /> : null}
           {activeView === 'ai-selection' ? <AiSelectionView accounts={accounts} isPreview={isBrowserPreview} settings={aiSettings} model={activeAiModel} onModelChange={setActiveAiModel} onOpenSettings={() => void selectSystemView('settings')} /> : null}
           {activeView === 'ai-operations' ? <AiOperationsView accounts={accounts} isPreview={isBrowserPreview} settings={aiSettings} model={activeAiModel} onModelChange={setActiveAiModel} onOpenSettings={() => void selectSystemView('settings')} /> : null}
-          {activeView === 'ai-analysis' ? <AiAnalyticsView accounts={accounts} isPreview={isBrowserPreview} settings={aiSettings} model={activeAiModel} onModelChange={setActiveAiModel} onOpenSettings={() => void selectSystemView('settings')} /> : null}
+          {activeView === 'ai-analysis' ? <CommerceAnalyticsView accounts={accounts} isPreview={isBrowserPreview} /> : null}
           {activeView === 'accounts' ? <AccountsView accounts={accounts} isPreview={isBrowserPreview} onAccountsChanged={refresh} onShopAction={selectShop} /> : null}
           {activeView === 'jobs' ? <JobsView jobs={jobs} accounts={accounts} isPreview={isBrowserPreview} onJobsChanged={setJobs} onNotify={notify} /> : null}
           {activeView === 'quality' ? <QualityView /> : null}
@@ -663,15 +669,21 @@ function formatElapsed(elapsedMs: number): string {
 }
 
 function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: AccountSummary[]; isPreview: boolean; progress: Record<string, CollectionProgress>; onNotify: (notification: NotificationInput) => void }): React.JSX.Element {
+  const historyRevision = useHistoryRevision()
   const [dataset, setDataset] = useState<ReportDataset | null>(null)
   const [loading, setLoading] = useState(!isPreview)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [selectedDate, setSelectedDate] = useState(shanghaiYesterday)
+  const [dateRange, setDateRange] = useState(() => ({ dateStart: shanghaiYesterday(), dateEnd: shanghaiYesterday() }))
+  const [period, setPeriod] = useState<DashboardPeriod>('yesterday')
+  const selectedDate = dateRange.dateEnd
+  const multipleDays = dateRange.dateStart !== dateRange.dateEnd
   const [shopFilter, setShopFilter] = useState('all')
   const [reloadVersion, setReloadVersion] = useState(0)
   const [updating, setUpdating] = useState(false)
   const [updateResult, setUpdateResult] = useState<{ type: 'success' | 'info' | 'warning' | 'error'; title: string; description: string } | null>(null)
   const today = shanghaiToday()
+  let rangeError: string | null = null
+  try { dashboardDates(dateRange.dateStart, dateRange.dateEnd); if (dateRange.dateEnd > today) rangeError = '不能选择未来日期' } catch (reason) { rangeError = errorMessage(reason) }
   const effectiveAccounts = [...new Map(accounts.filter(({ enabled }) => enabled).map((account) => [`${account.platform}/${account.shopId}`, account])).values()]
   const platformKeys = [...new Set(effectiveAccounts.map(({ platform }) => platform))].sort()
   const filteredAccounts = shopFilter === 'all'
@@ -700,15 +712,17 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
   useEffect(() => {
     if (shopFilter !== 'all' && filteredAccounts.length === 0) setShopFilter('all')
   }, [accountSignature, shopFilter])
-  useEffect(() => setUpdateResult(null), [selectedDate, shopFilter])
+  useEffect(() => setUpdateResult(null), [dateRange.dateStart, selectedDate, shopFilter])
   useEffect(() => {
-    if (isPreview || !window.desktopApi || filteredAccounts.length === 0) { setDataset(null); setLoading(false); return }
+    if (isPreview || !window.desktopApi || filteredAccounts.length === 0 || rangeError) { setDataset(null); setLoading(false); return }
     setLoading(true)
-    window.desktopApi.reports.query({ reportType: 'tmall_daily_dashboard', dateStart: selectedDate, dateEnd: selectedDate, platforms: selectedPlatforms, shopIds: selectedShopIds, ownerIds: [] })
-      .then((value) => { setDataset(value); setLoadError(null) })
-      .catch((reason: unknown) => setLoadError(errorMessage(reason)))
-      .finally(() => setLoading(false))
-  }, [accountSignature, isPreview, selectedDate, reloadVersion])
+    setDataset(null)
+    setLoadError(null)
+    return startDashboardQuery(
+      () => window.desktopApi!.reports.query({ reportType: 'tmall_daily_dashboard', ...dateRange, platforms: selectedPlatforms, shopIds: selectedShopIds, ownerIds: [] }),
+      { onData: setDataset, onError: (reason) => setLoadError(errorMessage(reason)), onSettled: () => setLoading(false) }
+    )
+  }, [accountSignature, isPreview, dateRange.dateStart, selectedDate, rangeError, reloadVersion, historyRevision])
   useEffect(() => {
     if (loadError) onNotify({ id: `dashboard:error:${shopFilter}:${selectedDate}`, tone: 'error', title: '仪表盘数据读取失败', description: loadError })
   }, [loadError, onNotify, selectedDate, shopFilter])
@@ -753,31 +767,45 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
     await window.desktopApi.reports.cancelUpdate()
   }
 
-  const dateLabel = selectedDate === today ? '今日' : selectedDate === shanghaiYesterday() ? '昨日' : selectedDate
+  const dateLabel = multipleDays ? dashboardRangeLabel(dateRange) : selectedDate === today ? '今日' : selectedDate === shanghaiYesterday() ? '昨日' : selectedDate
+  const currentDataset = dataset?.filters.dateStart === dateRange.dateStart && dataset.filters.dateEnd === selectedDate
+    && [...dataset.filters.shopIds].sort().join('|') === [...selectedShopIds].sort().join('|')
+    && [...dataset.filters.platforms].sort().join('|') === [...selectedPlatforms].sort().join('|') ? dataset : null
   const activeProgress = filteredAccounts.map(({ accountId }) => progress[accountId]).find((value) => value && value.bizDate === selectedDate && value.stage !== 'completed' && value.stage !== 'failed' && value.stage !== 'cancelled')
   const updateButtonLabel = shopFilter === 'all' ? '更新全部有效店铺' : selectedShop ? '更新当前店铺' : `更新${platformLabel(selectedPlatforms[0] ?? '')}平台`
   const toolbar = <>
+    <div className="page-heading dashboard-page-heading">
+      <div><div className="breadcrumb">工作台 / 销售总览</div><h1>多平台销售看板</h1><p>按自然日查看全部有效店铺经营数据</p></div>
+      <div className="heading-actions dashboard-heading-actions">
+        <span className="demo-badge">{isPreview ? '演示数据' : '本地数据'}</span>
+        <Button icon={<Icon name="download" />} disabled>导出 CSV</Button>
+        <HistoryBackfillPanel accounts={accounts} isPreview={isPreview} compact initialShopIds={selectedShopIds} initialDate={selectedDate} initialDateStart={dateRange.dateStart} disabled={Boolean(rangeError) || updating || !filteredAccounts.length} />
+        {updating ? <Button danger onClick={() => void cancelUpdate()}>取消更新</Button> : multipleDays ? <HistoryBackfillPanel accounts={accounts} isPreview={isPreview} compact primary buttonLabel="补齐所选范围" initialShopIds={selectedShopIds} initialDate={selectedDate} initialDateStart={dateRange.dateStart} disabled={isPreview || Boolean(rangeError) || !filteredAccounts.length} /> : <Button type="primary" disabled={isPreview || Boolean(rangeError) || filteredAccounts.length === 0} onClick={() => void updateSelectedStores()}>{updateButtonLabel}</Button>}
+      </div>
+    </div>
     <div className="dashboard-toolbar">
       <div className="dashboard-filter-controls">
         <div className="dashboard-shop-control"><label htmlFor="dashboard-shop-filter">店铺筛选</label><Select id="dashboard-shop-filter" value={shopFilter} options={filterOptions} disabled={updating || effectiveAccounts.length === 0} onChange={(value) => { setShopFilter(value); setLoadError(null) }} /></div>
-        <div className="dashboard-date-control"><label htmlFor="dashboard-biz-date">数据日期</label><input id="dashboard-biz-date" type="date" value={selectedDate} max={today} disabled={updating} onChange={(event) => { if (event.target.value && event.target.value <= today) { setSelectedDate(event.target.value) } }} /><Button size="small" disabled={updating || selectedDate === today} onClick={() => setSelectedDate(today)}>今天</Button><Button size="small" disabled={updating || selectedDate === shanghaiYesterday()} onClick={() => setSelectedDate(shanghaiYesterday())}>昨天</Button></div>
+        <DashboardDateControls range={dateRange} period={period} today={today} disabled={updating} onChange={(range, nextPeriod) => { setDateRange(range); setPeriod(nextPeriod) }}><DashboardCoverageNotice dataset={currentDataset} loading={loading} error={Boolean(loadError || rangeError)} emptyScope={!filteredAccounts.length} preview={isPreview} /></DashboardDateControls>
       </div>
-      <div className="dashboard-update-control">{updating && activeProgress ? <span className="dashboard-update-progress">{activeProgress.message} · {formatElapsed(activeProgress.elapsedMs)}</span> : null}{updating ? <Button danger onClick={() => void cancelUpdate()}>取消更新</Button> : <Button type="primary" disabled={isPreview || filteredAccounts.length === 0} onClick={() => void updateSelectedStores()}>{updateButtonLabel}</Button>}</div>
     </div>
+    {updating && activeProgress ? <p className="dashboard-update-progress" role="status">{activeProgress.message} · {formatElapsed(activeProgress.elapsedMs)}</p> : null}
+    <p className="dashboard-range-hint">周按周一至周日，月按自然月；以结束日期定位，未结束的周/月截至昨日。支持手动选择日期范围（最多 366 天）。绿色表示总览核心指标齐全，Top 与客服明细另计。</p>
+    {rangeError ? <Alert type="error" showIcon message={rangeError} /> : null}
     {updateResult ? <Alert className="dashboard-update-result" type={updateResult.type} showIcon closable message={updateResult.title} description={updateResult.description} onClose={() => setUpdateResult(null)} /> : null}
   </>
 
   if (isPreview) return <>{toolbar}<DemoDashboard /></>
-  if (loading) return <>{toolbar}<div className="empty-state"><h2>正在读取 {selectedDate} 仪表盘数据…</h2><p>数据仅从本地 Report Dataset 加载。</p></div></>
+  if (rangeError) return <>{toolbar}<div className="empty-state"><h2>请调整日期范围</h2></div></>
+  if (loading || (!currentDataset && !loadError && filteredAccounts.length > 0)) return <>{toolbar}<div className="empty-state"><h2>正在读取 {dateLabel} 仪表盘数据…</h2><p>数据仅从本地 Report Dataset 加载。</p></div></>
   if (effectiveAccounts.length === 0) return <>{toolbar}<div className="empty-state"><h2>尚未配置可用店铺</h2><p>请先在“系统 → 账号环境”添加并启用账号。</p></div></>
   if (loadError) return <>{toolbar}<div className="empty-state"><h2>仪表盘数据暂时无法读取</h2><p>请查看右上角通知了解具体原因。</p></div></>
-  if (!dataset || dataset.meta.data_status === 'empty') return <>{toolbar}<div className="empty-state"><h2>{filterLabel}尚无 {selectedDate} 的采集数据</h2><p>点击“{updateButtonLabel}”采集该自然日数据；今天的数据可重复刷新。</p></div></>
+  if (!dataset || dataset.meta.data_status === 'empty') return <>{toolbar}<div className="empty-state"><h2>{filterLabel}尚无 {dateLabel} 的采集数据</h2><p>点击“{multipleDays ? '补齐所选范围' : updateButtonLabel}”获取数据；历史补采支持最近 30 个已结束的自然日。</p></div></>
 
   const summary = dataset.summary
   const refundAmt = nullableNumeric(summary['refund_amt'])
-  const refundReportedShopCount = nullableNumeric(summary['refund_reported_shop_count']) ?? (refundAmt === null ? 0 : selectedShopIds.length)
-  const refundMissingShopCount = nullableNumeric(summary['refund_missing_shop_count']) ?? Math.max(0, selectedShopIds.length - refundReportedShopCount)
-  const refundCoverage = refundMissingShopCount > 0 ? ` · 覆盖 ${refundReportedShopCount}/${refundReportedShopCount + refundMissingShopCount} 家` : ''
+  const multipleShops = selectedShopIds.length > 1
+  const partialLabel = (key: string, label: string): string => metricCoverage(summary, key) && summary[key] !== null ? `已知${label}` : label
   const shopOverviewRows = dataset.sections.shop_overview ?? [{
     shop_id: dataset.filters.shopIds[0] ?? null,
     shop_name: dataset.meta.shop_name || filterLabel,
@@ -796,27 +824,27 @@ function Dashboard({ accounts, isPreview, progress, onNotify }: { accounts: Acco
   return <>
     {toolbar}
     <section className="metric-grid dashboard-metric-grid" aria-label={`${dateLabel}核心经营指标`}>
-      <MetricCard label={`${dateLabel}支付金额`} value={currency(summary['pay_amt'])} change="生意参谋" tone="accent" />
-      <MetricCard label="支付子订单数" value={integer(summary['pay_order_count'])} change={`${dateLabel}各店铺合计`} />
-      <MetricCard label="访客数" value={integer(summary['visitor_count'])} change={`${dateLabel}自然日`} />
-      <MetricCard label="支付转化率" value={percent(summary['pay_rate'])} change="支付买家 / 访客" />
+      <MetricCard label={`${dateLabel}${partialLabel('pay_amt', '支付金额')}`} value={currency(summary['pay_amt'])} change={`生意参谋${metricCoverage(summary, 'pay_amt')}${lowerBoundNote(summary, 'pay_amt')}`} tone="accent" />
+      <MetricCard label={partialLabel('pay_order_count', '支付子订单数')} value={integer(summary['pay_order_count'])} change={`${dateLabel}各店铺合计${metricCoverage(summary, 'pay_order_count')}`} />
+      <MetricCard label={partialLabel('visitor_count', multipleDays ? '每日访客合计' : '访客数')} value={integer(summary['visitor_count'])} change={`${multipleDays ? '每日各店合计，未跨日/跨店去重' : multipleShops ? '各店 UV 合计，未跨店去重' : `${dateLabel}自然日`}${metricCoverage(summary, 'visitor_count')}`} />
+      <MetricCard label="支付转化率" value={percent(summary['pay_rate'])} change={multipleDays ? '每日支付买家合计 / 每日访客合计' : multipleShops ? '总支付买家 / 总访客' : '平台原值优先 · 买家 / 访客'} />
       <MetricCard label="客单价" value={currency(summary['customer_unit_price'])} change="支付金额 / 买家" />
-      <MetricCard label={refundMissingShopCount > 0 ? '已知成功退款金额' : '成功退款金额'} value={currency(refundAmt)} change={`退款影响率 ${percent(summary['refund_rate'])}${refundCoverage}`} tone={numeric(refundAmt) > 0 ? 'danger' : 'success'} />
-      <MetricCard label="广告消耗" value={currency(summary['ad_spend'])} change={`整体 ROI ${decimal(summary['ad_roi'])}`} tone="danger" />
+      <MetricCard label={partialLabel('refund_amt', '成功退款金额')} value={currency(refundAmt)} change={`${multipleDays ? '区间' : '当日'}退款支付比 ${percent(summary['daily_refund_pay_ratio'])}${metricCoverage(summary, 'refund_amt')}${lowerBoundNote(summary, 'refund_amt')}`} tone={numeric(refundAmt) > 0 ? 'danger' : 'default'} />
+      <MetricCard label={partialLabel('ad_spend', '广告消耗')} value={currency(summary['ad_spend'])} change={`整体投产比 ${decimal(summary['ad_roi'])} · 总支付 / 广告消耗${metricCoverage(summary, 'ad_spend')}`} tone="danger" />
     </section>
     <section className="chart-grid primary-grid dashboard-overview-grid">
-      <Panel title={`${dateLabel}经营数据`} subtitle={`${dataset.meta.biz_date} · 支付、退款与广告消耗`} className="wide-panel"><EChart option={trendOption} height={280} ariaLabel="支付、退款与广告消耗图" /></Panel>
-      <Panel title="店铺概况" subtitle={`${selectedDate} · ${shopOverviewRows.length} 个店铺`} className="shop-overview-panel"><ShopOverviewList rows={shopOverviewRows} /></Panel>
+      <Panel title={`${dateLabel}经营数据`} subtitle={`${dataset.meta.date_range} · 支付、退款与广告消耗`} className="wide-panel"><EChart option={trendOption} height={280} ariaLabel="支付、退款与广告消耗图" /></Panel>
+      <Panel title="店铺概况" subtitle={`${dateLabel} · ${shopOverviewRows.length} 个店铺`} className="shop-overview-panel"><ShopOverviewList rows={shopOverviewRows} /></Panel>
     </section>
     <section className="chart-grid secondary-grid">
-      <Panel title="流量来源" subtitle="生意参谋来源 Top"><ReportTable rows={dataset.sections.channels} columns={[['source_name', '来源'], ['visitor_count', '访客'], ['page_view_count', '浏览'], ['pay_amt', '支付金额']]} /></Panel>
-      <Panel title="商品表现" subtitle={`${dataset.shop_rows.length} 个商品`} className="ranking-panel"><ReportTable rows={dataset.shop_rows} columns={[['item_title', '商品'], ['visitor_count', '访客'], ['page_view_count', '浏览'], ['pay_amt', '支付金额']]} /></Panel>
+      <Panel title="流量来源" subtitle={`${multipleDays ? '逐日' : ''}各店来源 Top 明细，未合并来源`}><DashboardReportTable rows={dataset.sections.channels} detail="channels" multipleShops={multipleShops} multipleDays={multipleDays} /></Panel>
+      <Panel title="商品表现" subtitle={`${dataset.shop_rows.length} 条${multipleDays ? '逐日' : ''}店铺商品 Top 记录`} className="ranking-panel"><DashboardReportTable rows={dataset.shop_rows} detail="products" multipleShops={multipleShops} multipleDays={multipleDays} /></Panel>
     </section>
     <section className="chart-grid secondary-grid">
-      <Panel title="搜索关键词" subtitle="生意参谋关键词 Top"><ReportTable rows={dataset.sections.keywords ?? []} columns={[["keyword", "关键词"], ["visitor_count", "访客"], ["page_view_count", "浏览"], ["pay_amt", "支付金额"]]} /></Panel>
-      <Panel title="客服服务" subtitle={`已读取 ${dataset.sections.service.length} 项客服指标`}><ReportTable rows={dataset.sections.service.slice(0, 10)} columns={[["name", "指标"], ["value", "所选日期值"]]} /></Panel>
+      <Panel title="搜索关键词" subtitle={`${multipleDays ? '逐日' : ''}各店关键词 Top 明细`}><DashboardReportTable rows={dataset.sections.keywords ?? []} detail="keywords" multipleShops={multipleShops} multipleDays={multipleDays} /></Panel>
+      <Panel title="客服服务" subtitle={`已读取 ${dataset.sections.service.length} 条指标记录 · 按日期、店铺、账号及来源区分`}><DashboardReportTable rows={dataset.sections.service} detail="service" multipleShops={multipleShops} multipleDays={multipleDays} /></Panel>
     </section>
-    <Panel title="数据覆盖与限制" subtitle="仪表盘不会把缺失数据写成 0"><ul className="quality-warning-list">{dataset.quality.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></Panel>
+    <Panel title="数据覆盖与限制" subtitle="缺失值显示 —；部分合计注明覆盖范围"><ul className="quality-warning-list"><li>退款支付比为所选日期范围内成功退款金额 / 支付金额，可能超过 100%，不代表原订单支付周期的退款率。</li><li>整体投产比为全店支付金额 / 广告消耗；仅在所选店铺各日相关字段全部覆盖时计算，不代表广告归因投产比或利润率。</li>{dataset.quality.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></Panel>
   </>
 }
 
@@ -834,19 +862,14 @@ function DemoDashboard(): React.JSX.Element {
   </>
 }
 
-function ReportTable({ rows, columns }: { rows: Array<Record<string, string | number | null>>; columns: Array<[string, string]> }): React.JSX.Element {
-  if (rows.length === 0) return <div className="report-empty">本次未返回记录</div>
-  return <div className="ranking-table-wrap"><table className="ranking-table"><thead><tr>{columns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map(([key]) => <td key={key} title={String(row[key] ?? '')}>{key.includes('amt') ? currency(row[key]) : String(row[key] ?? '—')}</td>)}</tr>)}</tbody></table></div>
-}
-
 function ShopOverviewList({ rows }: { rows: Array<Record<string, string | number | null>> }): React.JSX.Element {
   if (rows.length === 0) return <div className="report-empty">所选范围暂无店铺数据</div>
   return <div className="shop-overview-list">{rows.map((row, index) => <article className="shop-overview-card" key={`${String(row['shop_id'] ?? row['shop_name'])}-${index}`}>
-    <div className="shop-overview-heading"><strong>{String(row['shop_name'] ?? '未命名店铺')}</strong></div>
+    <div className="shop-overview-heading"><strong>{String(row['shop_name'] ?? '未命名店铺')}</strong>{row['missing_day_count'] != null ? <small className={row['data_status'] === 'complete' ? 'dashboard-coverage-complete' : 'dashboard-coverage-missing'}>{row['data_status'] === 'complete' ? '核心指标完整' : `缺日报 ${row['missing_day_count']} 天 · 指标缺口 ${row['incomplete_day_count']} 天`}</small> : null}</div>
     <div className="shop-overview-metrics">
-      <span>支付金额 <b>{currency(row['pay_amt'])}</b></span>
+      <span>支付金额 <b>{currency(row['pay_amt'])}</b>{row['pay_amt_lower_bound'] != null ? <small>Top 下限 {currency(row['pay_amt_lower_bound'])}</small> : null}</span>
       <span>访客数 <b>{nullableInteger(row['visitor_count'])}</b></span>
-      <span>退款金额 <b>{currency(row['refund_amt'])}</b></span>
+      <span>退款金额 <b>{currency(row['refund_amt'])}</b>{row['refund_amt_lower_bound'] != null ? <small>Top 下限 {currency(row['refund_amt_lower_bound'])}</small> : null}</span>
       <span>广告消耗 <b>{currency(row['ad_spend'])}</b></span>
     </div>
   </article>)}</div>
@@ -860,20 +883,17 @@ function reportTrendOption(dataset: ReportDataset): DashboardChartOption {
     tooltip: { trigger: 'axis' }, legend: { top: 0, right: 8 },
     xAxis: { type: 'category' as const, data: dates, axisTick: { show: false } }, yAxis: { type: 'value' as const },
     series: [
-      { name: '支付金额', type: 'bar' as const, data: dataset.trend.map((row) => numeric(row['pay_amt'])), itemStyle: { color: '#2383e2', borderRadius: [5, 5, 0, 0] } },
+      { name: '支付金额', type: 'bar' as const, data: dataset.trend.map((row) => nullableNumeric(row['pay_amt'])), itemStyle: { color: '#2383e2', borderRadius: [5, 5, 0, 0] } },
       { name: '退款金额', type: 'line' as const, data: dataset.trend.map((row) => nullableNumeric(row['refund_amt'])), lineStyle: { width: 2, color: '#e0533d' }, itemStyle: { color: '#e0533d' } },
-      { name: '广告消耗', type: 'line' as const, data: dataset.trend.map((row) => numeric(row['ad_spend'])), lineStyle: { width: 3, color: '#f0a43c' }, itemStyle: { color: '#f0a43c' } }
+      { name: '广告消耗', type: 'line' as const, data: dataset.trend.map((row) => nullableNumeric(row['ad_spend'])), lineStyle: { width: 3, color: '#f0a43c' }, itemStyle: { color: '#f0a43c' } }
     ]
   }
 }
 
 function numeric(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? value : 0 }
 function nullableNumeric(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) ? value : null }
-function currency(value: unknown): string { return typeof value === 'number' && Number.isFinite(value) ? `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—' }
-function integer(value: unknown): string { return Math.round(numeric(value)).toLocaleString('zh-CN') }
 function nullableInteger(value: unknown): string { const number = nullableNumeric(value); return number === null ? '—' : Math.round(number).toLocaleString('zh-CN') }
 function decimal(value: unknown): string { return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '—' }
-function percent(value: unknown): string { if (typeof value !== 'number' || !Number.isFinite(value)) return '—'; return `${(Math.abs(value) <= 1 ? value * 100 : value).toFixed(2)}%` }
 function shanghaiYesterday(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 86_400_000)) }
 function shanghaiToday(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }
 
@@ -1335,6 +1355,7 @@ function JobsView({ jobs, accounts, isPreview, onJobsChanged, onNotify }: { jobs
   ]
 
   return <section className="data-panel jobs-panel">
+    <HistoryBackfillPanel accounts={accounts} isPreview={isPreview} />
     <div className="panel-heading jobs-heading"><div><h2>采集任务</h2><p>按上海时间自动更新指定平台的有效店铺；程序运行期间自动触发。</p></div><Button type="primary" onClick={openCreate}>新建采集任务</Button></div>
     <div className="jobs-toolbar"><Select value={filter} onChange={setFilter} options={[{ value: 'all', label: `全部任务（${jobs.length}）` }, { value: 'pending', label: '待执行' }, { value: 'executed', label: '已执行' }]} /></div>
     <Table<JobSummary> rowKey="jobId" columns={columns} dataSource={visibleJobs} pagination={false} scroll={{ x: 1050 }} locale={{ emptyText: <div className="jobs-empty"><Icon name="tasks"/><strong>尚未设置采集任务</strong><span>点击右上角创建每日自动抓取计划</span></div> }} />

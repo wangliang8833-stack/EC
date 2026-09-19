@@ -1,4 +1,12 @@
 export const IPC_CHANNELS = {
+  historyPreview: 'history:preview',
+  historyCreate: 'history:create',
+  historyList: 'history:list',
+  historyPause: 'history:pause',
+  historyResume: 'history:resume',
+  historyCancel: 'history:cancel',
+  historyRetry: 'history:retry',
+  historyChanged: 'history:changed',
   accountsList: 'accounts:list',
   accountsCreate: 'accounts:create',
   accountsUpdate: 'accounts:update',

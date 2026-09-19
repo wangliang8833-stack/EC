@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { app, BrowserWindow, Menu, safeStorage, shell } from 'electron'
 import type { WorkspaceBrowserState } from '@ecommerce/shared'
 import pino from 'pino'
@@ -16,6 +16,16 @@ import { AiModelSettingsRepository } from './ai/ai-model-settings-repository.js'
 import { LlmProvider } from './ai/llm-provider.js'
 import { AiDecisionRepository } from './ai/ai-decision-repository.js'
 
+// Honor an explicit Chromium profile argument before resolving settings/locks (also used by isolated package verification).
+const explicitUserData = app.commandLine.getSwitchValue('user-data-dir')
+if (explicitUserData) {
+  if (!isAbsolute(explicitUserData)) throw new TypeError('user-data-dir must be absolute')
+  mkdirSync(explicitUserData, { recursive: true })
+  app.setPath('userData', explicitUserData)
+}
+const primaryInstance = app.requestSingleInstanceLock()
+if (!primaryInstance) app.quit()
+
 const loggerOptions: pino.LoggerOptions = {
   level: process.env['LOG_LEVEL'] ?? 'info',
   redact: {
@@ -25,7 +35,7 @@ const loggerOptions: pino.LoggerOptions = {
 }
 let logger = pino(loggerOptions)
 
-let disposeIpc: (() => void) | undefined
+let disposeIpc: (() => Promise<void>) | undefined
 let browserProfiles: BrowserProfileManager | undefined
 let mainWindow: BrowserWindow | null = null
 let quitFlushInProgress = false
@@ -157,13 +167,20 @@ async function bootstrap(): Promise<void> {
   logger.info({ dataRoot, developmentLogPath }, 'application started')
 }
 
-app.whenReady().then(bootstrap).catch((error: unknown) => {
+if (primaryInstance) app.whenReady().then(bootstrap).catch((error: unknown) => {
   logger.fatal({ err: error }, 'application bootstrap failed')
   app.quit()
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) void createMainWindow()
+  if (primaryInstance && BrowserWindow.getAllWindows().length === 0) void createMainWindow()
+})
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
 })
 
 app.on('window-all-closed', () => {
@@ -175,10 +192,10 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (quitFlushInProgress) return
   quitFlushInProgress = true
-  void (browserProfiles?.closeAll() ?? Promise.resolve())
+  void (disposeIpc?.() ?? Promise.resolve())
+    .then(() => browserProfiles?.closeAll())
     .catch((error: unknown) => logger.error({ err: error }, 'failed to flush account sessions before quit'))
     .finally(() => {
-      disposeIpc?.()
       quitFlushCompleted = true
       app.quit()
     })

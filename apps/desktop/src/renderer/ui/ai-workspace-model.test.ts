@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ReportDataset } from '@ecommerce/shared'
-import { buildAnalyticsSnapshot, buildOperationProposals, buildSelectionOpportunities } from './ai-workspace-model.js'
+import { buildOperationProposals, buildSelectionOpportunities } from './ai-workspace-model.js'
 
 function report(overrides: Partial<ReportDataset> = {}): ReportDataset {
   return {
@@ -33,9 +33,4 @@ describe('AI workspace deterministic models', () => {
     expect(proposals.some(({ problemCode }) => problemCode === 'HIGH_TRAFFIC_LOW_CONVERSION')).toBe(true)
   })
 
-  it('keeps missing metrics null instead of inventing values', () => {
-    const snapshot = buildAnalyticsSnapshot(report({ summary: {} }), report({ summary: {} }))
-    expect(snapshot.metrics.find(({ key }) => key === 'sales.gmv')?.value).toBeNull()
-    expect(snapshot.metrics.find(({ key }) => key === 'ad.roas')?.value).toBeNull()
-  })
 })

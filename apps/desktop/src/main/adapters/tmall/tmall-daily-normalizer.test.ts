@@ -12,6 +12,59 @@ const account: AccountConfig = {
 }
 
 describe('normalizeTmallDaily money units', () => {
+  function sample(home: Record<string, unknown>, items: Array<Record<string, unknown>> = [], serviceRows: Array<Record<string, unknown>> = []): TmallDailySnapshot {
+    return {
+      bizDate: '2026-08-27', capturedAt: '2026-08-28T01:00:00.000Z', pages: [
+        { key: 'store', sourcePage: '首页', sourceUrl: 'https://sycm.taobao.com/portal/home.htm', endpoints: {
+          '/portal/live/new/index/overview/v3.json': { ok: true, body: { data: { yestday: home } } }
+        } },
+        { key: 'item', sourcePage: '商品', sourceUrl: 'https://sycm.taobao.com/cc/item_rank', endpoints: {
+          '/cc/item/view/top.json': { ok: true, body: { data: items } }
+        } },
+        { key: 'service', sourcePage: '客服', sourceUrl: 'https://sycm.taobao.com/qos/service/core_monitor/new', endpoints: {
+          '/csp/api/core/monitor/overview/list': { ok: true, body: { data: [{ name: '咨询人数', value: 2 }] } },
+          '/csp/api/core/monitor/list': { ok: true, body: { data: serviceRows } }
+        } }
+      ]
+    }
+  }
+
+  it('keeps unavailable facts and derived rates null instead of generating zero business', () => {
+    const { report } = normalizeTmallDaily(sample({ uv: 100, payAmt: ' ' }), account)
+    expect(report.summary).toMatchObject({ pay_amt: null, pay_order_count: null, pay_buyer_count: null, ad_spend: null, ad_pay_amt: null, pay_rate: null, customer_unit_price: null, ad_roi: null })
+    expect(report.trend[0]).toMatchObject({ pay_amt: null, ad_spend: null, pay_order_count: null })
+  })
+
+  it('distinguishes zero denominators from a real zero conversion', () => {
+    const empty = normalizeTmallDaily(sample({ payAmt: 0, payByrCnt: 0, uv: 0 }), account).report
+    const visitors = normalizeTmallDaily(sample({ payAmt: 0, payByrCnt: 0, uv: 10 }), account).report
+    expect(empty.summary).toMatchObject({ pay_amt: 0, pay_rate: null, customer_unit_price: null })
+    expect(visitors.summary).toMatchObject({ pay_rate: 0, customer_unit_price: null })
+  })
+
+  it('keeps Top amounts as separate lower bounds without claiming full store coverage', () => {
+    const { report } = normalizeTmallDaily(sample({ uv: 10 }, [{ itemId: 'top', payAmt: 100, sucRefundAmt: 20 }]), account)
+    expect(report.summary).toMatchObject({ pay_amt: null, refund_amt: null, pay_amt_lower_bound: 100, refund_amt_lower_bound: 20, daily_refund_pay_ratio: null })
+    expect(report.quality.warnings).toContainEqual(expect.stringContaining('下限'))
+  })
+
+  it('separates platform refund rates from same-day refund payment ratios and parses percent units', () => {
+    const { report } = normalizeTmallDaily(sample({ payAmt: 100, payByrCnt: 1, uv: 10, payRate: '0.5%', rfdSucAmt: 150, payAmtRfdRate: '10%' }), account)
+    expect(report.summary).toMatchObject({ pay_rate: 0.005, platform_refund_rate: 0.1, refund_rate: null, daily_refund_pay_ratio: 1.5 })
+  })
+
+  it('turns dated service fields into named metric rows and retains unknown field identity', () => {
+    const { report } = normalizeTmallDaily(sample({ payAmt: 100 }, [], [
+      { date: '20260827', serviceAccount: '客服甲', receptionCnt: 3, mysteryMetric: 4 },
+      { date: '20260826', receptionCnt: 99 }
+    ]), account)
+    expect(report.sections.service).toEqual([
+      expect.objectContaining({ name: '咨询人数', value: 2 }),
+      expect.objectContaining({ name: 'receptionCnt（未映射）', value: 3, service_account: '客服甲' }),
+      expect.objectContaining({ name: 'mysteryMetric（未映射）', value: 4, service_account: '客服甲' })
+    ])
+  })
+
   it('converts the trade endpoint payAmt from fen while preserving yuan-valued endpoints', () => {
     const snapshot: TmallDailySnapshot = {
       bizDate: '2026-08-27',
@@ -42,7 +95,9 @@ describe('normalizeTmallDaily money units', () => {
     expect(normalized.report.summary['pay_amt']).toBe(32.5)
     expect(normalized.report.summary['customer_unit_price']).toBe(32.5)
     expect(normalized.report.summary['refund_amt']).toBe(7.25)
-    expect(normalized.report.summary['refund_rate']).toBe(0.2231)
+    expect(normalized.report.summary['platform_refund_rate']).toBe(0.2231)
+    expect(normalized.report.summary['refund_rate']).toBeNull()
+    expect(normalized.report.summary['daily_refund_pay_ratio']).toBe(7.25 / 32.5)
     expect(normalized.report.trend[0]?.['pay_amt']).toBe(32.5)
     expect(normalized.datasets.find((dataset) => dataset.dataset === 'refund_summary_daily')?.rows[0]).toMatchObject({ success_refund_amt: 7.25 })
     expect(normalized.datasets).toHaveLength(7)
@@ -126,7 +181,8 @@ describe('normalizeTmallDaily money units', () => {
     const normalized = normalizeTmallDaily(snapshot, account)
 
     expect(normalized.report.summary['pay_amt']).toBe(18.25)
-    expect(normalized.report.summary['refund_amt']).toBe(2.5)
+    expect(normalized.report.summary['refund_amt']).toBeNull()
+    expect(normalized.report.summary['refund_amt_lower_bound']).toBe(2.5)
   })
 
   it('preserves missing refund totals as unknown instead of inferring zero from a Top item list', () => {

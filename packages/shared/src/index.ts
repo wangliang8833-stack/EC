@@ -1,3 +1,7 @@
+export * from './history-backfill.js'
+export * from './dashboard-range.js'
+import type { HistoryBackfillRequest, HistoryBackfillPreview, HistoryBackfillJob } from './history-backfill.js'
+
 export const LOGIN_STATES = [
   'unknown',
   'authenticated',
@@ -317,6 +321,7 @@ export interface DataUpdateResult {
 }
 
 export interface ReportDataset {
+  dashboard_coverage?: import('./dashboard-range.js').DashboardCoverage
   schema_version: '1.0.0'
   report_type: string
   dataset_id: string
@@ -329,6 +334,7 @@ export interface ReportDataset {
     data_status: 'real' | 'empty'
     collection_status: 'completed' | 'not_collected'
     normalizer_version?: string
+    collection_run_id?: string
     data_finality?: 'realtime' | 'final'
     source_validation?: {
       status: 'passed' | 'partial'
@@ -401,7 +407,7 @@ export interface SystemStorageSettings {
 }
 
 export type AiProviderCode = 'openai' | 'deepseek' | 'qwen' | 'openai_compatible'
-export type AiTaskType = 'product_selection_analysis' | 'ecommerce_operation_strategy' | 'analytics_explanation' | 'analytics_question_planning'
+export type AiTaskType = 'product_selection_analysis' | 'ecommerce_operation_strategy'
 
 export interface AiModelSettings {
   provider: AiProviderCode
@@ -493,6 +499,16 @@ export interface WorkspaceBrowserState {
 }
 
 export interface DesktopApi {
+  history: {
+    preview(input: HistoryBackfillRequest): Promise<HistoryBackfillPreview>
+    create(input: HistoryBackfillRequest): Promise<HistoryBackfillJob>
+    list(): Promise<HistoryBackfillJob[]>
+    pause(jobId: string): Promise<void>
+    resume(jobId: string): Promise<void>
+    cancel(jobId: string): Promise<void>
+    retryFailed(jobId: string): Promise<void>
+    onChanged(listener: (job: HistoryBackfillJob) => void): () => void
+  }
   accounts: {
     list(): Promise<AccountSummary[]>
     create(input: CreateAccountInput): Promise<AccountSummary>

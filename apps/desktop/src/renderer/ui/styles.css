@@ -229,8 +229,24 @@ button, input { font: inherit; }
 .error-banner { color: #9c3424; background: #fff0ed; border: 1px solid #f7d0c8; }
 .preview-banner, .inline-note { color: #68645b; background: #f5f1e5; border: 1px solid #e8dfc5; }
 .dashboard-toolbar { margin-bottom: 14px; padding: 11px 13px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 1px solid #e6e3dd; border-radius: 10px; background: #fff; }
-.dashboard-filter-controls, .dashboard-shop-control, .dashboard-date-control, .dashboard-update-control { display: flex; align-items: center; gap: 8px; }
-.dashboard-filter-controls { gap: 18px; min-width: 0; }
+.dashboard-filter-controls, .dashboard-shop-control, .dashboard-date-control, .dashboard-date-shortcuts { display: flex; align-items: center; gap: 8px; }
+.dashboard-filter-controls { gap: 18px; min-width: 0; flex-wrap: wrap; }
+.dashboard-date-control { flex-wrap: wrap; }
+.dashboard-page-heading { flex-wrap: wrap; }
+.dashboard-heading-actions { margin-left: auto; flex-wrap: nowrap; flex-shrink: 0; white-space: nowrap; }
+.dashboard-date-shortcuts { flex-shrink: 0; }
+.dashboard-coverage-dropdown { position: relative; flex-shrink: 0; font-size: 12px; }
+.dashboard-coverage-complete { color: #29823a; font-weight: 600; }
+.dashboard-coverage-missing { color: #c53030; font-weight: 600; min-width: 0; }
+.dashboard-coverage-dropdown summary { cursor: pointer; padding: 5px 0; display: flex; align-items: center; gap: 5px; list-style: none; white-space: nowrap; }
+.dashboard-coverage-dropdown summary::-webkit-details-marker { display: none; }
+.dashboard-coverage-arrow { font-size: 9px; }
+.dashboard-coverage-dropdown[open] .dashboard-coverage-arrow { transform: rotate(180deg); }
+.dashboard-coverage-dropdown summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.dashboard-coverage-neutral, .dashboard-range-hint { color: var(--text-secondary); font-size: 12px; }
+.dashboard-range-hint { margin: -6px 0 14px; }
+.dashboard-coverage-details { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: min(580px, calc(100vw - 280px)); color: var(--text-primary); font-size: 12px; font-weight: 400; max-height: 300px; overflow: auto; overflow-wrap: anywhere; padding: 12px 14px; background: #fff; border: 1px solid #e6e3dd; border-radius: 8px; box-shadow: 0 6px 24px rgb(55 53 47 / 12%); }
+.dashboard-coverage-details p { margin: 5px 0; }
 .dashboard-shop-control label, .dashboard-date-control label { flex: none; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
 .dashboard-shop-control .ant-select { width: 218px; }
 .dashboard-date-control input { height: 30px; padding: 0 9px; border: 1px solid #d9d7d2; border-radius: 6px; color: var(--text-primary); background: #fff; font: inherit; font-size: 12px; outline: none; }
@@ -246,7 +262,7 @@ button, input { font: inherit; }
 .shop-overview-list::-webkit-scrollbar-thumb { min-height: 34px; border: 2px solid #efedf3; border-radius: 999px; background: #aaa6b6; }
 .shop-overview-list::-webkit-scrollbar-thumb:hover { background: #8f8a9e; }
 .shop-overview-card { padding: 10px 11px; border: 1px solid #ebe8e2; border-radius: 9px; background: #fbfaf8; }
-.shop-overview-heading { min-width: 0; }
+.shop-overview-heading { min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .shop-overview-heading strong { min-width: 0; overflow: hidden; color: var(--text-primary); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .shop-overview-metrics { margin-top: 9px; display: grid; grid-template-columns: repeat(4, max-content); justify-content: space-between; gap: 7px; }
 .shop-overview-metrics span { min-width: 0; display: flex; align-items: baseline; gap: 3px; color: var(--text-tertiary); font-size: 9px; white-space: nowrap; }
@@ -438,7 +454,6 @@ button, input { font: inherit; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-toolbar { align-items: stretch; flex-direction: column; }
   .dashboard-filter-controls { align-items: flex-start; flex-wrap: wrap; }
-  .dashboard-update-control { justify-content: space-between; }
   .help-features-grid, .help-steps-grid, .help-faq-grid { grid-template-columns: 1fr; }
   .ai-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ai-two-column { grid-template-columns: 1fr; }

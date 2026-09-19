@@ -85,12 +85,14 @@ interface BrowserWorkspace {
   autoLoginAttempted: boolean
   observedStatus: LoginState | null
   closing: boolean
+  checkpointTimer: NodeJS.Timeout | undefined
 }
 
 export class BrowserProfileManager {
   private readonly downloadHandlers = new WeakSet<Session>()
   private readonly restoredSessions = new WeakSet<Session>()
   private readonly persistenceWatchers = new WeakMap<Session, { account: AccountConfig; timer: NodeJS.Timeout | undefined }>()
+  private readonly persistenceOperations = new WeakMap<Session, Promise<void>>()
   private readonly openingWorkspace = new OpeningWorkspaceLease()
   private readonly backgroundCollectors = new Map<string, WebContents>()
   private workspace: BrowserWorkspace | undefined
@@ -139,7 +141,8 @@ export class BrowserProfileManager {
         revision: 0,
         autoLoginAttempted: false,
         observedStatus: null,
-        closing: false
+        closing: false,
+        checkpointTimer: undefined
       }
       this.workspace = workspace
       const initialTab = this.createWorkspaceTab(workspace, `${getPlatformPreset(account.platform).label}-${account.shop_name}`)
@@ -153,10 +156,12 @@ export class BrowserProfileManager {
         if (initialTab.contents.isDestroyed() || this.workspace?.leaseId !== leaseId) return null
         const redirectedUrl = initialTab.contents.getURL()
         if (redirectedUrl !== account.login_url && isAllowedAccountUrl(redirectedUrl, account.allowed_hosts)) {
+          this.startTmallSessionCheckpoint(workspace)
           return this.publishWorkspaceState(workspace)
         }
         throw error
       }
+      this.startTmallSessionCheckpoint(workspace)
       return this.publishWorkspaceState(workspace)
     } finally {
       this.openingWorkspace.finish(leaseId)
@@ -240,6 +245,10 @@ export class BrowserProfileManager {
     if (!current || !ownsWorkspaceLease(current.leaseId, leaseId)) return
     this.workspace = undefined
     current.closing = true
+    if (current.checkpointTimer) {
+      clearInterval(current.checkpointTimer)
+      current.checkpointTimer = undefined
+    }
     for (const tab of current.tabs) {
       ipcMain.removeListener(ACCOUNT_LOGIN_AUTOMATION_CHANNELS.status, tab.statusHandler)
       if (!current.host.isDestroyed() && current.host.contentView.children.includes(tab.view)) {
@@ -689,7 +698,7 @@ export class BrowserProfileManager {
 
   private async prepareSessionPersistence(account: AccountConfig, accountSession: Session): Promise<void> {
     if (!this.restoredSessions.has(accountSession)) {
-      await this.sessionCookieVault.restore(account, accountSession.cookies)
+      await this.sessionCookieVault.restore(account, accountSession.cookies).catch(() => 0)
       this.restoredSessions.add(accountSession)
     }
     const existing = this.persistenceWatchers.get(accountSession)
@@ -709,7 +718,24 @@ export class BrowserProfileManager {
     this.persistenceWatchers.set(accountSession, watcher)
   }
 
-  private async persistAccountEnvironment(account: AccountConfig, accountSession: Session): Promise<void> {
+  private startTmallSessionCheckpoint(workspace: BrowserWorkspace): void {
+    if (workspace.account.platform !== 'tmall' || workspace.checkpointTimer) return
+    workspace.checkpointTimer = setInterval(() => {
+      void this.persistAccountEnvironment(workspace.account, workspace.accountSession).catch(() => undefined)
+    }, 60_000)
+    workspace.checkpointTimer.unref()
+  }
+
+  private persistAccountEnvironment(account: AccountConfig, accountSession: Session): Promise<void> {
+    const previous = this.persistenceOperations.get(accountSession) ?? Promise.resolve()
+    const current = previous.catch(() => undefined).then(() => this.persistAccountEnvironmentNow(account, accountSession))
+    this.persistenceOperations.set(accountSession, current)
+    return current.finally(() => {
+      if (this.persistenceOperations.get(accountSession) === current) this.persistenceOperations.delete(accountSession)
+    })
+  }
+
+  private async persistAccountEnvironmentNow(account: AccountConfig, accountSession: Session): Promise<void> {
     const watcher = this.persistenceWatchers.get(accountSession)
     if (watcher?.timer) {
       clearTimeout(watcher.timer)
@@ -835,7 +861,8 @@ function resourceCaptureScript(specs: TmallResourceSpec[]): string {
           if (!response.ok || !contentType.includes('json')) {
             return [spec.path, { ok: false, status: response.status, error: 'UNEXPECTED_RESPONSE' }];
           }
-          return [spec.path, { ok: true, status: response.status, body: await response.json() }];
+          const requestDate = spec.match?.dateRange?.split('|')[0] || (spec.match?.startDate ? spec.match.startDate.replace(/^(\\d{4})(\\d{2})(\\d{2})$/, '$1-$2-$3') : null);
+          return [spec.path, { ok: true, status: response.status, requestDate, capturedAt: new Date().toISOString(), body: await response.json() }];
         } catch {
           return [spec.path, { ok: false, status: 0, error: controller.signal.aborted ? 'FETCH_TIMEOUT' : 'FETCH_FAILED' }];
         } finally {

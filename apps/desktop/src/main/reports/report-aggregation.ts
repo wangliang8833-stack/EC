@@ -1,9 +1,14 @@
 import type { ReportDataset, ReportQuery } from '@ecommerce/shared'
 
-const SUM_KEYS = [
+export const SUM_KEYS = [
   'pay_amt', 'pay_order_count', 'pay_buyer_count', 'pay_item_count', 'visitor_count', 'page_view_count',
-  'ad_spend', 'ad_pay_amt'
+  'ad_spend', 'ad_pay_amt', 'refund_amt'
 ] as const
+
+const METRIC_LABELS: Record<(typeof SUM_KEYS)[number], string> = {
+  pay_amt: '支付金额', pay_order_count: '支付子订单数', pay_buyer_count: '支付买家数', pay_item_count: '支付件数',
+  visitor_count: '访客数', page_view_count: '浏览量', ad_spend: '广告消耗', ad_pay_amt: '广告归因成交', refund_amt: '成功退款金额'
+}
 
 export interface ReportShopTarget {
   shopId: string
@@ -11,62 +16,45 @@ export interface ReportShopTarget {
   platform: string
 }
 
+export function summarizeReports(reports: ReportDataset[], expectedShopCount: number, usePlatformRate = true): ReportDataset['summary'] {
+  const single = usePlatformRate && reports.length === 1 && expectedShopCount === 1 ? reports[0] : undefined
+  const summary = aggregateFacts(reports.map((report) => report.summary), SUM_KEYS, expectedShopCount)
+  for (const key of ['pay_amt_lower_bound', 'refund_amt_lower_bound']) {
+    summary[key] = sumKnown(reports.map((report) => report.summary[key]))
+  }
+  summary['pay_rate'] = single && nullableNumeric(single.summary['visitor_count']) !== 0
+    ? nullableNumeric(single.summary['pay_rate']) ?? coveredRatio(summary, 'pay_buyer_count', 'visitor_count')
+    : coveredRatio(summary, 'pay_buyer_count', 'visitor_count')
+  summary['customer_unit_price'] = coveredRatio(summary, 'pay_amt', 'pay_buyer_count')
+  summary['refund_rate'] = null
+  summary['platform_refund_rate'] = single ? nullableNumeric(single.summary['platform_refund_rate']) : null
+  summary['daily_refund_pay_ratio'] = coveredRatio(summary, 'refund_amt', 'pay_amt')
+  summary['ad_roi'] = coveredRatio(summary, 'pay_amt', 'ad_spend')
+  summary['platform_ad_roi'] = single ? nullableNumeric(single.summary['platform_ad_roi']) : coveredRatio(summary, 'ad_pay_amt', 'ad_spend')
+  return summary
+}
+
 export function aggregateReports(query: ReportQuery, expectedShopCount: number, reports: ReportDataset[], expectedShops: ReportShopTarget[] = []): ReportDataset | null {
   if (reports.length === 0) return null
-  if (reports.length === 1 && expectedShopCount === 1) {
-    const report = reports[0]
-    if (!report) return null
-    return { ...report, sections: { ...report.sections, shop_overview: buildShopOverview(reports, expectedShops) } }
-  }
+  const single = reports.length === 1 && expectedShopCount === 1 ? reports[0] : undefined
   const generatedAt = new Date().toISOString()
-  const summary: Record<string, string | number | null> = {}
-  for (const key of SUM_KEYS) summary[key] = reports.reduce((sum, report) => sum + numeric(report.summary[key]), 0)
-  const refundReports = reports.flatMap((report) => {
-    const refundAmt = nullableNumeric(report.summary['refund_amt'])
-    return refundAmt === null ? [] : [{ refundAmt, payAmt: numeric(report.summary['pay_amt']) }]
-  })
-  const refundReportedShopCount = refundReports.length
-  const refundMissingShopCount = Math.max(0, expectedShopCount - refundReportedShopCount)
-  summary['refund_amt'] = refundReportedShopCount > 0 ? refundReports.reduce((sum, { refundAmt }) => sum + refundAmt, 0) : null
-  summary['refund_reported_shop_count'] = refundReportedShopCount
-  summary['refund_missing_shop_count'] = refundMissingShopCount
-  const payAmt = numeric(summary['pay_amt'])
-  const payBuyers = numeric(summary['pay_buyer_count'])
-  const visitors = numeric(summary['visitor_count'])
-  const refundAmt = nullableNumeric(summary['refund_amt'])
-  const refundCoveredPayAmt = refundReports.reduce((sum, report) => sum + report.payAmt, 0)
-  const adSpend = numeric(summary['ad_spend'])
-  const adPayAmt = numeric(summary['ad_pay_amt'])
-  summary['pay_rate'] = visitors > 0 ? payBuyers / visitors : 0
-  summary['customer_unit_price'] = payBuyers > 0 ? payAmt / payBuyers : 0
-  summary['refund_rate'] = refundCoveredPayAmt > 0 && refundAmt !== null ? refundAmt / refundCoveredPayAmt : null
-  summary['ad_roi'] = adSpend > 0 ? payAmt / adSpend : null
-  summary['platform_ad_roi'] = adSpend > 0 ? adPayAmt / adSpend : null
-
-  const trends = new Map<string, Record<string, string | number | null>>()
+  const summary = summarizeReports(reports, expectedShopCount)
+  const trends = new Map<string, Array<Record<string, string | number | null>>>()
   for (const report of reports) {
     for (const row of report.trend) {
       const date = String(row['date'] ?? report.meta.biz_date)
-      const current = trends.get(date) ?? { date, pay_amt: 0, refund_amt: null, refund_reported_shop_count: 0, refund_missing_shop_count: expectedShopCount, visitor_count: 0, pay_order_count: 0, ad_spend: 0 }
-      for (const key of ['pay_amt', 'visitor_count', 'pay_order_count', 'ad_spend']) current[key] = numeric(current[key]) + numeric(row[key])
-      const rowRefundAmt = nullableNumeric(row['refund_amt'])
-      if (rowRefundAmt !== null) {
-        current['refund_amt'] = numeric(current['refund_amt']) + rowRefundAmt
-        current['refund_reported_shop_count'] = numeric(current['refund_reported_shop_count']) + 1
-      }
+      const current = trends.get(date) ?? []
+      current.push(row)
       trends.set(date, current)
     }
   }
-  for (const row of trends.values()) {
-    row['refund_missing_shop_count'] = Math.max(0, expectedShopCount - numeric(row['refund_reported_shop_count']))
-  }
   const missingShopCount = Math.max(0, expectedShopCount - reports.length)
   const warnings = [...new Set(reports.flatMap(({ quality }) => quality.warnings))]
-  if (refundMissingShopCount > 0) {
-    warnings.unshift(refundReportedShopCount > 0
-      ? `${refundMissingShopCount} 家店铺未返回退款金额，当前退款金额与退款影响率仅按 ${refundReportedShopCount} 家已知数据汇总。`
-      : `${refundMissingShopCount} 家店铺均未返回退款金额，当前无法计算退款金额与退款影响率。`)
+  for (const key of SUM_KEYS) {
+    const covered = numeric(summary[`${key}_reported_shop_count`])
+    if (covered < expectedShopCount) warnings.push(`${METRIC_LABELS[key]}覆盖 ${covered}/${expectedShopCount} 家店铺；仅汇总已知值，相关全范围比率按缺失处理。`)
   }
+  if (nullableNumeric(summary['pay_amt_lower_bound']) !== null || nullableNumeric(summary['refund_amt_lower_bound']) !== null) warnings.push('Top 商品下限仅用于提示缺失店铺的已知金额，不计入全店总额或比率。')
   if (missingShopCount > 0) warnings.unshift(`${missingShopCount} 家有效店铺尚无所选日期的报表数据。`)
   const attachShop = (rows: Array<Record<string, string | number | null>>, report: ReportDataset): Array<Record<string, string | number | null>> => rows.map((row) => ({ shop_name: report.meta.shop_name, shop_id: report.filters.shopIds[0] ?? null, ...row }))
   const sections = {
@@ -78,19 +66,20 @@ export function aggregateReports(query: ReportQuery, expectedShopCount: number, 
     shop_overview: buildShopOverview(reports, expectedShops)
   }
   const completeShopCount = reports.filter(({ quality }) => quality.status === 'complete').length
-  const allComplete = missingShopCount === 0 && completeShopCount === reports.length
+  const allComplete = missingShopCount === 0 && completeShopCount === reports.length && SUM_KEYS.every((key) => summary[`${key}_missing_shop_count`] === 0)
   return {
     schema_version: '1.0.0',
     report_type: query.reportType,
-    dataset_id: `tmall_multi_${query.dateEnd.replaceAll('-', '')}`,
+    dataset_id: single?.dataset_id ?? `tmall_multi_${query.dateEnd.replaceAll('-', '')}`,
     filters: query,
     meta: {
-      shop_name: `${reports.length} 家店铺汇总`, date_range: query.dateStart === query.dateEnd ? query.dateEnd : `${query.dateStart}—${query.dateEnd}`,
+      ...single?.meta,
+      shop_name: single?.meta.shop_name ?? `${reports.length} 家店铺汇总`, date_range: query.dateStart === query.dateEnd ? query.dateEnd : `${query.dateStart}—${query.dateEnd}`,
       updated_at: reports.map(({ meta }) => meta.updated_at).sort().at(-1) ?? generatedAt, biz_date: query.dateEnd,
       data_status: 'real', collection_status: 'completed', normalizer_version: reports.every(({ meta }) => meta.normalizer_version === reports[0]?.meta.normalizer_version) ? reports[0]?.meta.normalizer_version ?? 'unknown' : 'mixed'
     },
     summary,
-    trend: [...trends.values()].sort((left, right) => String(left['date']).localeCompare(String(right['date']))),
+    trend: [...trends.entries()].map(([date, rows]) => ({ date, ...aggregateFacts(rows, ['pay_amt', 'refund_amt', 'visitor_count', 'pay_order_count', 'ad_spend'], expectedShopCount) })).sort((left, right) => left.date.localeCompare(right.date)),
     shop_rows: reports.flatMap((report) => attachShop(report.shop_rows, report)),
     sections,
     quality: {
@@ -108,6 +97,33 @@ function numeric(value: unknown): number {
 
 function nullableNumeric(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function sumKnown(values: unknown[]): number | null {
+  const known = values.map(nullableNumeric).filter((value): value is number => value !== null)
+  return known.length > 0 ? known.reduce((sum, value) => sum + value, 0) : null
+}
+
+function aggregateFacts(rows: Array<Record<string, string | number | null>>, keys: readonly string[], expectedShopCount: number): Record<string, string | number | null> {
+  const result: Record<string, string | number | null> = {}
+  for (const key of keys) {
+    const values = rows.map((row) => row[key])
+    const count = values.filter((value) => nullableNumeric(value) !== null).length
+    result[key] = sumKnown(values)
+    result[`${key}_reported_shop_count`] = count
+    result[`${key}_missing_shop_count`] = Math.max(0, expectedShopCount - count)
+  }
+  // 保留旧版退款覆盖字段，兼容现有消费方。
+  result['refund_reported_shop_count'] = result['refund_amt_reported_shop_count'] ?? 0
+  result['refund_missing_shop_count'] = result['refund_amt_missing_shop_count'] ?? expectedShopCount
+  return result
+}
+
+function coveredRatio(summary: Record<string, string | number | null>, numeratorKey: string, denominatorKey: string): number | null {
+  if (summary[`${numeratorKey}_missing_shop_count`] !== 0 || summary[`${denominatorKey}_missing_shop_count`] !== 0) return null
+  const numerator = nullableNumeric(summary[numeratorKey])
+  const denominator = nullableNumeric(summary[denominatorKey])
+  return numerator !== null && denominator !== null && denominator > 0 ? numerator / denominator : null
 }
 
 function buildShopOverview(reports: ReportDataset[], expectedShops: ReportShopTarget[]): Array<Record<string, string | number | null>> {
@@ -128,10 +144,12 @@ function buildShopOverview(reports: ReportDataset[], expectedShops: ReportShopTa
       platform: target.platform,
       biz_date: report?.meta.biz_date ?? null,
       pay_amt: report ? nullableNumeric(report.summary['pay_amt']) : null,
+      pay_amt_lower_bound: report ? nullableNumeric(report.summary['pay_amt_lower_bound']) : null,
       visitor_count: report ? nullableNumeric(report.summary['visitor_count']) : null,
       pay_buyer_count: report ? nullableNumeric(report.summary['pay_buyer_count']) : null,
       pay_rate: report ? nullableNumeric(report.summary['pay_rate']) : null,
       refund_amt: report ? nullableNumeric(report.summary['refund_amt']) : null,
+      refund_amt_lower_bound: report ? nullableNumeric(report.summary['refund_amt_lower_bound']) : null,
       ad_spend: report ? nullableNumeric(report.summary['ad_spend']) : null,
       data_status: report?.quality.status ?? 'empty',
       warning_count: report?.quality.warning_count ?? 0,

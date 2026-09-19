@@ -259,12 +259,14 @@ describe('TmallProbeService', () => {
     const service = new TmallProbeService(browser, storage, {
       info: (fields) => { logged.push(fields) }, warn: () => undefined, error: () => undefined
     })
-    const first = await service.run(account)
+    const first = await service.run(account, { bizDate: '2026-08-27' })
     const reportPath = first.relativePath!
     const legacy = await storage.readJson<ReportDataset>(reportPath)
     legacy['summary']['pay_amt'] = 3250
     legacy['summary']['customer_unit_price'] = 3250
-    delete legacy['meta']['normalizer_version']
+    legacy.meta.normalizer_version = 'tmall-0.5.3'
+    legacy.generated_at = '2026-09-17T01:00:00.000Z'
+    legacy.summary['ad_spend'] = 0
     await storage.writeJson(reportPath, legacy)
 
     const repaired = await service.getCompletedReport(account, first.bizDate!)
@@ -272,6 +274,7 @@ describe('TmallProbeService', () => {
     expect(repaired?.summary['pay_amt']).toBe(32.5)
     expect(repaired?.summary['customer_unit_price']).toBe(32.5)
     expect(repaired?.meta.normalizer_version).toBe(TMALL_NORMALIZER_VERSION)
+    expect(repaired?.summary['ad_spend']).toBeNull()
     expect(repaired?.source_paths.filter((path) => path.includes('/raw/'))).toHaveLength(5)
     expect(collectionCalls).toBe(1)
     expect(logged).toContainEqual(expect.objectContaining({ event: 'report_repaired', oldPayAmt: 3250, newPayAmt: 32.5 }))

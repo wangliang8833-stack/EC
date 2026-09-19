@@ -17,6 +17,7 @@
     "test:coverage": "pnpm -r --if-present test:coverage",
     "licenses:check": "node scripts/verify-license-lock.mjs",
     "audit:dependencies": "pnpm audit --audit-level high",
+    "privacy:check": "node scripts/verify-repository-privacy.mjs",
     "check": "pnpm licenses:check && pnpm typecheck && pnpm test && pnpm build && node scripts/verify-electron-preload.mjs"
   },
   "devDependencies": {

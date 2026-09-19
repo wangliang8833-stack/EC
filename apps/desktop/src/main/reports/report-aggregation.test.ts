@@ -19,10 +19,49 @@ function report(shopId: string, payAmt: number, refundAmt: number | null, buyers
 }
 
 describe('aggregateReports', () => {
+  it('keeps absent totals unknown and prevents rates across differently covered shops', () => {
+    const a = report('a', 100, 10, 1, 10)
+    const b = report('b', 900, null, 9, 90)
+    a.summary['ad_spend'] = 10
+    b.summary['ad_spend'] = null
+    b.summary['pay_buyer_count'] = null
+    b.trend[0]!['ad_spend'] = null
+    const result = aggregateReports(query, 2, [a, b])!
+    expect(result.summary).toMatchObject({ pay_amt: 1000, ad_spend: 10, ad_spend_reported_shop_count: 1, ad_spend_missing_shop_count: 1, ad_roi: null, pay_rate: null, customer_unit_price: null, daily_refund_pay_ratio: null })
+    expect(result.trend[0]).toMatchObject({ ad_spend_missing_shop_count: 1 })
+    a.summary['ad_spend'] = null
+    a.trend[0]!['ad_spend'] = null
+    expect(aggregateReports(query, 2, [a, b])?.summary['ad_spend']).toBeNull()
+    expect(aggregateReports(query, 2, [a, b])?.trend[0]?.['ad_spend']).toBeNull()
+  })
+
+  it('uses the same daily refund definition in single and multi-shop reports', () => {
+    const a = report('a', 100, 20, 1, 10)
+    a.summary['platform_refund_rate'] = 0.1
+    const b = report('b', 0, 0, 0, 0)
+    const single = aggregateReports({ ...query, shopIds: ['a'] }, 1, [a])!
+    const multi = aggregateReports(query, 2, [a, b])!
+    expect(single.summary).toMatchObject({ daily_refund_pay_ratio: 0.2, platform_refund_rate: 0.1, refund_rate: null })
+    expect(multi.summary).toMatchObject({ daily_refund_pay_ratio: 0.2, platform_refund_rate: null, refund_rate: null })
+  })
+
+  it('keeps lower bounds distinct from covered totals in summary and shop overview', () => {
+    const a = report('a', 100, null, 1, 10)
+    a.summary['refund_amt_lower_bound'] = 20
+    const result = aggregateReports(query, 2, [a, report('b', 0, 0, 0, 0)])!
+    expect(result.summary).toMatchObject({ refund_amt: 0, refund_amt_lower_bound: 20, refund_reported_shop_count: 1, refund_missing_shop_count: 1, daily_refund_pay_ratio: null })
+    expect(result.sections.shop_overview?.[0]).toMatchObject({ refund_amt: null, refund_amt_lower_bound: 20 })
+  })
+
+  it('does not calculate rates when a requested shop has no report or denominators are zero', () => {
+    expect(aggregateReports(query, 2, [report('a', 100, 10, 1, 10)])?.summary).toMatchObject({ ad_roi: null, pay_rate: null, customer_unit_price: null })
+    expect(aggregateReports(query, 2, [report('a', 0, 0, 0, 0), report('b', 0, 0, 0, 0)])?.summary).toMatchObject({ pay_rate: null, customer_unit_price: null, daily_refund_pay_ratio: null })
+  })
+
   it('sums shop facts and recalculates rates from the combined totals', () => {
     const result = aggregateReports(query, 2, [report('a', 30, 3, 1, 5, 2), report('b', 70, 7, 3, 15, 5)])
 
-    expect(result?.summary).toMatchObject({ pay_amt: 100, refund_amt: 10, pay_order_count: 7, pay_buyer_count: 4, visitor_count: 20, pay_rate: 0.2, customer_unit_price: 25, refund_rate: 0.1, ad_roi: 25 })
+    expect(result?.summary).toMatchObject({ pay_amt: 100, refund_amt: 10, pay_order_count: 7, pay_buyer_count: 4, visitor_count: 20, pay_rate: 0.2, customer_unit_price: 25, refund_rate: null, daily_refund_pay_ratio: 0.1, ad_roi: 25 })
     expect(result?.trend).toEqual([expect.objectContaining({ pay_amt: 100, refund_amt: 10, pay_order_count: 7 })])
     expect(result?.shop_rows).toHaveLength(2)
     expect(result?.quality.dataset_count).toBe(14)
@@ -36,7 +75,8 @@ describe('aggregateReports', () => {
 
     expect(result?.summary).toMatchObject({
       refund_amt: 1_273.72,
-      refund_rate: 1_273.72 / 30,
+      refund_rate: null,
+      daily_refund_pay_ratio: null,
       refund_reported_shop_count: 1,
       refund_missing_shop_count: 1
     })
@@ -45,7 +85,7 @@ describe('aggregateReports', () => {
       refund_reported_shop_count: 1,
       refund_missing_shop_count: 1
     })
-    expect(result?.quality.warnings).toContain('1 家店铺未返回退款金额，当前退款金额与退款影响率仅按 1 家已知数据汇总。')
+    expect(result?.quality.warnings).toContain('成功退款金额覆盖 1/2 家店铺；仅汇总已知值，相关全范围比率按缺失处理。')
   })
 
   it('keeps the refund amount missing when no shop reports it', () => {

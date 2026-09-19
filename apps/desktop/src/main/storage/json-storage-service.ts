@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFile, copyFile, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
+import { appendFile, copyFile, mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
 import { SchemaRegistry, type SchemaId } from '@ecommerce/schemas'
 
@@ -38,7 +38,7 @@ export class JsonStorageService {
     ])
   }
 
-  async writeJson<T>(relativePath: string, value: T, schemaId?: SchemaId): Promise<AtomicWriteResult> {
+  async writeJson<T>(relativePath: string, value: T, schemaId?: SchemaId, beforeCommit?: () => void): Promise<AtomicWriteResult> {
     if (schemaId) {
       this.schemas.assert<T>(schemaId, value)
     }
@@ -66,6 +66,7 @@ export class JsonStorageService {
       if (await this.exists(target)) {
         await copyFile(target, `${target}.bak`)
       }
+      beforeCommit?.()
       await rename(temporary, target)
 
       const result: AtomicWriteResult = {
@@ -89,6 +90,17 @@ export class JsonStorageService {
       this.schemas.assert<T>(schemaId, value)
     }
     return value as T
+  }
+
+  async listChildren(directory: string, kind: 'json' | 'directory'): Promise<string[]> {
+    try {
+      const entries = await readdir(this.resolveSafe(directory), { withFileTypes: true })
+      return entries.filter(entry => kind === 'directory' ? entry.isDirectory() : entry.isFile() && entry.name.endsWith('.json'))
+        .map(entry => `${directory}/${entry.name}`).sort()
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
   }
 
   private resolveSafe(path: string): string {

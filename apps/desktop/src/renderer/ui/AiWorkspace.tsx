@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Empty, Input, Modal, Select, Space, Spin, Table, Tag, message } from 'antd'
+import { Alert, Button, Empty, Modal, Select, Space, Spin, Table, Tag, message } from 'antd'
 import type { AccountSummary, AiDecisionRecord, AiModelSettings, ReportDataset } from '@ecommerce/shared'
-import { buildAnalyticsSnapshot, buildOperationProposals, buildSelectionOpportunities, type OperationProposalRow, type SelectionOpportunityRow } from './ai-workspace-model.js'
+import { buildOperationProposals, buildSelectionOpportunities, type OperationProposalRow, type SelectionOpportunityRow } from './ai-workspace-model.js'
 
 interface AiPageProps {
   accounts: AccountSummary[]
@@ -149,50 +149,6 @@ export function AiOperationsView(props: AiPageProps): React.JSX.Element {
   </section>
 }
 
-export function AiAnalyticsView(props: AiPageProps): React.JSX.Element {
-  const { reports, loading, error, reload } = useAiReports(props.accounts, props.isPreview)
-  const snapshot = useMemo(() => reports ? buildAnalyticsSnapshot(reports.business, reports.promotion) : null, [reports])
-  const [question, setQuestion] = useState('当前最需要关注的经营问题是什么？')
-  const [answer, setAnswer] = useState<Record<string, unknown> | null>(null)
-  const [asking, setAsking] = useState(false)
-  const [messageApi, context] = message.useMessage()
-
-  async function ask(): Promise<void> {
-    if (!snapshot || !reports) return
-    if (!canUseModel(props.settings, props.model)) { props.onOpenSettings(); return }
-    if (!question.trim()) { messageApi.warning('请输入经营问题。'); return }
-    setAsking(true); setAnswer(null)
-    try {
-      const result = await window.desktopApi.ai.generate({
-        task: 'analytics_explanation', model: props.model!,
-        systemPrompt: '你是电商数据分析师。指标已由程序计算，你只负责解释。区分 FACT、INFERENCE、UNKNOWN；所有结论必须引用 metric key 或 signal id。输出 answer、key_findings、evidence、limitations、follow_up_suggestions 和 query_summary。禁止输出 SQL。',
-        input: { question: question.trim().slice(0, 500), metric_version: 'analytics-metrics-v1.0.0', dataset_id: reports.business.dataset_id, metrics: snapshot.metrics, signals: snapshot.signals, quality: snapshot.quality }
-      })
-      setAnswer(result.output)
-    } catch (reason) { messageApi.error(errorMessage(reason)) } finally { setAsking(false) }
-  }
-
-  return <section className="ai-workspace-page">
-    {context}<AiModelStatus {...props} />
-    <AiDataState loading={loading} error={error} empty={!snapshot || reports?.business.meta.data_status !== 'real'} onReload={reload} emptyText="尚无经营数据，请先采集店铺报表后再进行 AI 数据分析。">
-      {snapshot ? <>
-        <div className="ai-kpi-grid">{snapshot.metrics.slice(0, 4).map((metric) => <AiKpi key={metric.key} label={metric.label} value={formatMetric(metric.value, metric.format)} note={metric.definition} tone={metric.key === 'sales.gmv' ? 'accent' : undefined} />)}</div>
-        {snapshot.quality.warnings.length > 0 ? <Alert className="ai-safety-banner" type="warning" showIcon title="数据质量提示" description={snapshot.quality.warnings.join('；')} /> : null}
-        <div className="ai-two-column">
-          <div className="ai-panel"><div className="ai-panel-heading"><div><h2>异常与诊断 Signal</h2><p>规则阈值先于模型运行，数据不足时不补造。</p></div><Tag>{snapshot.quality.status}</Tag></div>
-            <div className="ai-signal-list">{snapshot.signals.map((item) => <article key={item.id} className="ai-signal"><Tag color={item.severity === 'HIGH' ? 'red' : item.severity === 'MEDIUM' ? 'orange' : 'blue'}>{item.severity}</Tag><div><strong>{item.title}</strong><p>{item.evidence}</p><span>当前 {item.current} · 基准 {item.baseline} · 置信度 {formatPercent(item.confidence)}</span></div></article>)}</div>
-          </div>
-          <div className="ai-panel ai-question-panel"><div className="ai-panel-heading"><div><h2>AI 问数</h2><p>只把当前指标与 Signal 发送给模型，不开放任意 SQL。</p></div></div>
-            <Input.TextArea value={question} maxLength={500} autoSize={{ minRows: 3, maxRows: 5 }} onChange={(event) => setQuestion(event.target.value)} />
-            <div className="ai-question-actions"><span>范围：已授权店铺 · {reports?.business.meta.date_range}</span><Button type="primary" loading={asking} onClick={() => void ask()}>分析</Button></div>
-            {answer ? <StructuredOutput value={answer} /> : <div className="ai-question-placeholder">回答将同时显示证据、口径、局限和后续建议。</div>}
-          </div>
-        </div>
-      </> : null}
-    </AiDataState>
-  </section>
-}
-
 function useAiReports(accounts: AccountSummary[], isPreview: boolean): { reports: LoadedReports | null; loading: boolean; error: string | null; reload: () => void } {
   const [reports, setReports] = useState<LoadedReports | null>(null)
   const [loading, setLoading] = useState(true)
@@ -254,7 +210,6 @@ function labelForKey(key: string): string {
 
 function canUseModel(settings: AiModelSettings | null, model: string | null): boolean { return Boolean(window.desktopApi && settings?.apiKeyConfigured && model && settings.models.includes(model)) }
 function formatPercent(value: number | null): string { return value === null ? '—' : `${(value * 100).toFixed(1)}%` }
-function formatMetric(value: number | null, format: 'money' | 'integer' | 'percent' | 'ratio'): string { if (value === null) return '—'; if (format === 'money') return `¥${value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`; if (format === 'integer') return Math.round(value).toLocaleString('zh-CN'); if (format === 'percent') return formatPercent(value); return value.toFixed(2) }
 function gradeColor(value: string): string { return value === 'S' ? 'magenta' : value === 'A' ? 'green' : value === 'B' ? 'blue' : value === 'C' ? 'orange' : 'default' }
 function shanghaiYesterday(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 86_400_000)) }
 function errorMessage(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason) }

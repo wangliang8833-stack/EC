@@ -34,23 +34,6 @@ export interface OperationProposalRow {
   sourceSnapshotIds: string[]
 }
 
-export interface DiagnosticSignalRow {
-  id: string
-  domain: 'SALES' | 'TRAFFIC' | 'CONVERSION' | 'ADVERTISING' | 'AFTER_SALES' | 'DATA_QUALITY'
-  severity: 'HIGH' | 'MEDIUM' | 'LOW'
-  title: string
-  current: string
-  baseline: string
-  evidence: string
-  confidence: number
-}
-
-export interface AnalyticsSnapshot {
-  metrics: Array<{ key: string; label: string; value: number | null; format: 'money' | 'integer' | 'percent' | 'ratio'; definition: string }>
-  signals: DiagnosticSignalRow[]
-  quality: { status: string; warnings: string[]; dataAsOf: string; sourceSnapshotIds: string[] }
-}
-
 export function buildSelectionOpportunities(report: ReportDataset): SelectionOpportunityRow[] {
   const rows = report.shop_rows
     .map((row, index) => normalizeProduct(row, index, report))
@@ -101,37 +84,6 @@ export function buildOperationProposals(report: ReportDataset, promotion: Report
   return proposals.slice(0, 50)
 }
 
-export function buildAnalyticsSnapshot(report: ReportDataset, promotion: ReportDataset): AnalyticsSnapshot {
-  const summary = report.summary
-  const gmv = nullableNumber(summary['pay_amt'])
-  const visitors = nullableNumber(summary['visitor_count'])
-  const buyers = nullableNumber(summary['pay_buyer_count'])
-  const conversion = nullableNumber(summary['pay_rate']) ?? ratio(buyers, visitors)
-  const orders = nullableNumber(summary['pay_order_count'])
-  const aov = nullableNumber(summary['customer_unit_price']) ?? ratio(gmv, buyers)
-  const refundRate = nullableNumber(summary['refund_rate'])
-  const spend = nullableNumber(promotion.summary['spend'])
-  const roas = nullableNumber(promotion.summary['roi'])
-  const signals: DiagnosticSignalRow[] = []
-  if ((visitors ?? 0) >= 50 && (conversion ?? 0) < 0.03) signals.push(signal('conversion', 'CONVERSION', 'HIGH', '整体转化率偏低', percent(conversion), '规则阈值 3%', '访客量达到最小样本，但支付转化率低于阈值。', 0.9))
-  if ((refundRate ?? 0) >= 0.1) signals.push(signal('refund', 'AFTER_SALES', 'HIGH', '退款风险偏高', percent(refundRate), '规则阈值 10%', '退款影响率达到风险阈值。', report.quality.status === 'complete' ? 0.9 : 0.68))
-  if ((spend ?? 0) > 0 && roas !== null && roas < 3) signals.push(signal('roas', 'ADVERTISING', 'MEDIUM', '推广回报低于安全线', roas.toFixed(2), '默认安全线 3.00', '按归因成交金额/广告消耗的比值计算。', 0.82))
-  if (report.quality.status !== 'complete' || report.quality.warnings.length > 0) signals.push(signal('quality', 'DATA_QUALITY', 'MEDIUM', '数据完整度需要关注', report.quality.status, 'complete', report.quality.warnings[0] ?? '存在缺失店铺或字段。', 1))
-  if (signals.length === 0 && report.meta.data_status === 'real') signals.push(signal('stable', 'SALES', 'LOW', '核心经营指标未触发规则异常', formatMoney(gmv), '当前规则集', '确定性诊断未发现超过阈值的问题。', 0.78))
-  return {
-    metrics: [
-      { key: 'sales.gmv', label: '成交金额', value: gmv, format: 'money', definition: '支付成交金额' },
-      { key: 'sales.paid_orders', label: '支付订单', value: orders, format: 'integer', definition: '支付订单数' },
-      { key: 'traffic.visitors', label: '访客数', value: visitors, format: 'integer', definition: '去重访问人数' },
-      { key: 'conversion.visit_to_order', label: '支付转化率', value: conversion, format: 'percent', definition: '支付买家数/访客数' },
-      { key: 'sales.aov', label: '客单价', value: aov, format: 'money', definition: '成交金额/支付买家数' },
-      { key: 'ad.roas', label: '广告 ROAS', value: roas, format: 'ratio', definition: '归因成交金额/广告消耗' }
-    ],
-    signals,
-    quality: { status: report.quality.status, warnings: [...new Set([...report.quality.warnings, ...promotion.quality.warnings])], dataAsOf: report.meta.updated_at, sourceSnapshotIds: sourceIds(report) }
-  }
-}
-
 function normalizeProduct(row: Record<string, string | number | null>, index: number, report: ReportDataset): Omit<SelectionOpportunityRow, 'marketScore' | 'storeFitScore' | 'riskScore' | 'overallScore' | 'grade' | 'confidence'> {
   const payAmount = number(row['pay_amt'])
   const visitorCount = number(row['visitor_count'])
@@ -152,10 +104,6 @@ function normalizeProduct(row: Record<string, string | number | null>, index: nu
 
 function proposal(index: number, target: string, shopName: string, problemCode: OperationProposalRow['problemCode'], summary: string, action: string, risk: OperationProposalRow['risk'], currentValue: number | null, suggestedValue: number | null, report: ReportDataset): OperationProposalRow {
   return { id: `${report.dataset_id}:${problemCode}:${index}`, target, shopName, problemCode, summary, action, risk, confidence: report.quality.status === 'complete' ? 0.88 : 0.66, currentValue, suggestedValue, sourceSnapshotIds: sourceIds(report) }
-}
-
-function signal(id: string, domain: DiagnosticSignalRow['domain'], severity: DiagnosticSignalRow['severity'], title: string, current: string, baseline: string, evidence: string, confidence: number): DiagnosticSignalRow {
-  return { id, domain, severity, title, current, baseline, evidence, confidence }
 }
 
 function sourceIds(report: ReportDataset): string[] {
@@ -183,4 +131,3 @@ function ratio(numerator: number | null, denominator: number | null): number | n
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)) }
 function round(value: number, digits = 1): number { const factor = 10 ** digits; return Math.round(value * factor) / factor }
 function percent(value: number | null): string { return value === null ? '数据不足' : `${(value * 100).toFixed(1)}%` }
-function formatMoney(value: number | null): string { return value === null ? '数据不足' : `¥${value.toFixed(2)}` }

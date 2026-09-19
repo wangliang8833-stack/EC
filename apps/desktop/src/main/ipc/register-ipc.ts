@@ -10,6 +10,8 @@ import type { PersistedStorageSettings, StorageSettingsRepository } from '../set
 import { DataUpdateService, selectEffectiveAccounts } from '../reports/data-update-service.js'
 import { ScheduledCollectionService } from '../automation/scheduled-collection-service.js'
 import { aggregateReports } from '../reports/report-aggregation.js'
+import { buildDashboardRangeReport } from '../reports/dashboard-range-report.js'
+import { dashboardDates, shanghaiBusinessDate } from '@ecommerce/shared'
 import { buildPromotionReport } from '../reports/promotion-report.js'
 import { loadPromotionDetails, mergePromotionDetailBundles } from '../reports/promotion-detail-loader.js'
 import { assertAccountCredentialInput, assertCreateAccountInput, assertDataUpdateRequest, assertReportQuery, assertSafeId, assertStorageDirectoryKind, assertUpdateAccountInput, assertUpdateStorageSettingsInput, assertWorkspaceBounds } from '../security/input-validation.js'
@@ -17,6 +19,10 @@ import { IPC_CHANNELS } from './channels.js'
 import type { AiModelSettingsRepository } from '../ai/ai-model-settings-repository.js'
 import type { LlmProvider } from '../ai/llm-provider.js'
 import type { AiDecisionRepository } from '../ai/ai-decision-repository.js'
+import { assertHistoryBackfillRequest } from '@ecommerce/shared'
+import { HistoryBackfillService } from '../automation/history-backfill-service.js'
+import { CollectionCoordinator } from '../automation/collection-coordinator.js'
+import { TmallHistoryStore } from '../adapters/tmall/tmall-history-store.js'
 
 export interface IpcServices {
   accounts: AccountRepository
@@ -34,27 +40,45 @@ export interface IpcServices {
   getMainWindow: () => BrowserWindow | null
 }
 
-export function registerIpcHandlers(services: IpcServices): () => void {
+export function registerIpcHandlers(services: IpcServices): () => Promise<void> {
   const activeCollections = new Map<string, AbortController>()
-  const dataUpdate = new DataUpdateService(services.accounts, services.tmallProbe)
-  let activeDataUpdate: AbortController | null = null
+  const coordinator = new CollectionCoordinator()
+  const dataUpdate = new DataUpdateService(services.accounts, services.tmallProbe, coordinator)
+  const activeDataUpdates = new Set<AbortController>()
   const publishCollectionProgress = (progress: import('@ecommerce/shared').CollectionProgress): void => {
     const window = services.getMainWindow()
     if (window && !window.isDestroyed()) window.webContents.send(IPC_CHANNELS.accountsCollectionProgress, progress)
   }
   const runDataUpdate = async (request: DataUpdateRequest, options: import('../reports/data-update-service.js').DataUpdateOptions = {}): Promise<DataUpdateResult> => {
-    if (activeDataUpdate || activeCollections.size > 0) throw new Error('已有数据采集任务正在执行，请等待完成或先取消任务。')
     const controller = new AbortController()
     const abortFromCaller = (): void => controller.abort()
     options.signal?.addEventListener('abort', abortFromCaller, { once: true })
-    activeDataUpdate = controller
+    if (options.signal?.aborted) controller.abort()
+    activeDataUpdates.add(controller)
     try {
-      return await dataUpdate.run(request, { ...options, signal: controller.signal, onProgress: options.onProgress ?? publishCollectionProgress })
+      return await coordinator.run(['update-batch'], () => dataUpdate.run(request, { ...options, signal: controller.signal, onProgress: options.onProgress ?? publishCollectionProgress }), controller.signal)
     } finally {
       options.signal?.removeEventListener('abort', abortFromCaller)
-      if (activeDataUpdate === controller) activeDataUpdate = null
+      activeDataUpdates.delete(controller)
     }
   }
+  const history = new HistoryBackfillService(services.storage, services.accounts, new TmallHistoryStore(services.storage), coordinator,
+    (account, options) => services.tmallProbe.run(account, options), job => {
+      const window = services.getMainWindow()
+      if (window && !window.isDestroyed()) window.webContents.send(IPC_CHANNELS.historyChanged, job)
+    })
+  const historyReady = history.start()
+  // Keep startup failures observable via IPC without creating an unhandled rejection.
+  void historyReady.catch(() => undefined)
+  ipcMain.handle(IPC_CHANNELS.historyPreview, async (_event, input: unknown) => { await historyReady; assertHistoryBackfillRequest(input); return history.preview(input) })
+  ipcMain.handle(IPC_CHANNELS.historyCreate, async (_event, input: unknown) => { await historyReady; assertHistoryBackfillRequest(input); return history.create(input) })
+  ipcMain.handle(IPC_CHANNELS.historyList, async () => { await historyReady; return history.list() })
+  for (const [channel, action] of [
+    [IPC_CHANNELS.historyPause, (id: string) => history.pause(id)],
+    [IPC_CHANNELS.historyResume, (id: string) => history.resume(id)],
+    [IPC_CHANNELS.historyCancel, (id: string) => history.cancel(id)],
+    [IPC_CHANNELS.historyRetry, (id: string) => history.resume(id, true)]
+  ] as const) ipcMain.handle(channel, async (_event, id: unknown) => { await historyReady; assertSafeId(id, 'jobId'); await action(id) })
   const scheduledJobs = new ScheduledCollectionService(
     services.storage,
     services.accounts,
@@ -147,19 +171,18 @@ export function registerIpcHandlers(services: IpcServices): () => void {
   })
   ipcMain.handle(IPC_CHANNELS.accountsTestCollection, async (_event, accountId: unknown) => {
     assertSafeId(accountId, 'accountId')
-    if (activeDataUpdate) throw new Error('所有店铺数据正在统一更新，请等待完成或先取消更新。')
     if (activeCollections.has(accountId)) throw new Error('该账号已有采集任务正在执行，请等待完成或先取消任务。')
     const account = await services.accounts.get(accountId)
     const controller = new AbortController()
     activeCollections.set(accountId, controller)
     try {
-      const result = await services.tmallProbe.run(account, {
+      const result = await coordinator.run([`shop:${account.platform}/${account.shop_id}`, `account:${accountId}`], () => services.tmallProbe.run(account, {
         signal: controller.signal,
         onProgress: (progress) => {
           const window = services.getMainWindow()
           if (window && !window.isDestroyed()) window.webContents.send(IPC_CHANNELS.accountsCollectionProgress, progress)
         }
-      })
+      }), controller.signal)
       if (result.status === 'NEED_HUMAN_LOGIN') {
         await services.accounts.updateLoginStatus(accountId, 'need_human_login', new Date().toISOString())
       }
@@ -208,12 +231,28 @@ export function registerIpcHandlers(services: IpcServices): () => void {
   ipcMain.handle(IPC_CHANNELS.reportsQuery, async (_event, input: unknown): Promise<ReportDataset> => {
     assertReportQuery(input)
     const query: ReportQuery = input
+    if (query.reportType === 'tmall_daily_dashboard') {
+      const dates = dashboardDates(query.dateStart, query.dateEnd)
+      if (query.dateEnd > shanghaiBusinessDate()) throw new RangeError('销售总览不能查询未来日期')
+      if (query.shopIds.length > 200) throw new RangeError('销售总览最多查询 200 家店铺')
+      const configured = (await services.accounts.list()).filter(account => account.enabled && query.platforms.includes(account.platform) && query.shopIds.includes(account.shop_id))
+      if (query.shopIds.some(id => !configured.some(account => account.shop_id === id))) throw new RangeError('部分所选店铺已停用或不存在，请重新选择店铺')
+      const targets = configured.map(account => ({ shopId: account.shop_id, shopName: account.shop_name, platform: account.platform }))
+      const reports: ReportDataset[] = []
+      for (const account of selectEffectiveAccounts(configured)) {
+        for (const date of dates) {
+          const report = await coordinator.run([`shop:${account.platform}/${account.shop_id}`], () => services.tmallProbe.getCompletedReport(account, date), undefined, 1)
+          if (report) reports.push(report)
+        }
+      }
+      return buildDashboardRangeReport(query, targets, reports)
+    }
     if (query.shopIds.length > 0 && query.platforms.includes('tmall')) {
       const requestedShopIds = new Set(query.shopIds)
       const accounts = selectEffectiveAccounts(await services.accounts.list()).filter(({ shop_id }) => requestedShopIds.has(shop_id))
       const reports: ReportDataset[] = []
       for (const account of accounts) {
-        const report = await services.tmallProbe.getCompletedReport(account, query.dateEnd)
+        const report = await coordinator.run([`shop:${account.platform}/${account.shop_id}`], () => services.tmallProbe.getCompletedReport(account, query.dateEnd), undefined, 1)
         if (report) reports.push(report)
       }
       const shopRefs = accounts.map((account) => ({
@@ -236,7 +275,7 @@ export function registerIpcHandlers(services: IpcServices): () => void {
     return runDataUpdate(input)
   })
   ipcMain.handle(IPC_CHANNELS.reportsCancelUpdate, () => {
-    activeDataUpdate?.abort()
+    for (const controller of activeDataUpdates) controller.abort()
   })
   ipcMain.handle(IPC_CHANNELS.reportsExportCsv, () => {
     throw new Error('CSV export is not implemented yet')
@@ -282,12 +321,13 @@ export function registerIpcHandlers(services: IpcServices): () => void {
     return toStorageSettingsResponse(await services.storageSettings.save(input), services)
   })
 
-  return () => {
+  return async () => {
     scheduledJobs.stop()
-    activeDataUpdate?.abort()
-    activeDataUpdate = null
+    for (const controller of activeDataUpdates) controller.abort()
     for (const controller of activeCollections.values()) controller.abort()
     activeCollections.clear()
+    coordinator.stop()
+    await history.stop()
     for (const channel of Object.values(IPC_CHANNELS)) ipcMain.removeHandler(channel)
   }
 }

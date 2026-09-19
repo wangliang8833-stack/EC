@@ -22,8 +22,7 @@ exports/
 backup/
 
 # Research repositories are never part of the product build
-research-references/*
-!research-references/README.md
+research-references/
 
 # IDE and OS files
 .idea/
@@ -32,3 +31,27 @@ research-references/*
 !.vscode/settings.json
 .DS_Store
 Thumbs.db
+
+# Development notes, captured business data, prototypes and local archives
+/docs/
+/artifacts/
+/apps/desktop/prototypes/
+/*.md
+!/README.md
+!/THIRD_PARTY_NOTICES.md
+/*.html
+*.rar
+*.zip
+*.7z
+*.tar
+*.gz
+*.bak
+*.bin
+*.sqlite*
+*.db
+**/Credential Vault/
+**/config/accounts/
+**/data/raw/
+**/data/normalized/
+**/data/aggregate/
+**/data/report-datasets/

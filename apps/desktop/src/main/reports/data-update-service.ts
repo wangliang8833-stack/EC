@@ -2,6 +2,8 @@ import type { AccountConfig, CollectionProgress, DataUpdateRequest, DataUpdateRe
 import type { AccountRepository } from '../accounts/account-repository.js'
 import { CollectionCancelledError } from '../adapters/tmall/collection-execution.js'
 import { shanghaiToday, type TmallProbeRunOptions, type TmallProbeService } from '../adapters/tmall/tmall-probe-service.js'
+import { isBusinessDate } from '@ecommerce/shared'
+import type { CollectionCoordinator } from '../automation/collection-coordinator.js'
 
 export interface DataUpdateOptions {
   signal?: AbortSignal | undefined
@@ -13,11 +15,12 @@ export interface DataUpdateOptions {
 export class DataUpdateService {
   constructor(
     private readonly accounts: Pick<AccountRepository, 'list' | 'updateLoginStatus'>,
-    private readonly tmallProbe: Pick<TmallProbeService, 'run'>
+    private readonly tmallProbe: Pick<TmallProbeService, 'run'>,
+    private readonly coordinator?: CollectionCoordinator
   ) {}
 
   async run(request: DataUpdateRequest, options: DataUpdateOptions = {}): Promise<DataUpdateResult> {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(request.bizDate)) throw new TypeError('bizDate must use YYYY-MM-DD')
+    if (!isBusinessDate(request.bizDate)) throw new TypeError('bizDate must use a valid YYYY-MM-DD')
     const today = shanghaiToday()
     if (request.bizDate > today) throw new RangeError(`不能更新未来日期 ${request.bizDate}`)
     const startedAt = new Date().toISOString()
@@ -39,7 +42,9 @@ export class DataUpdateService {
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.onProgress ? { onProgress: options.onProgress } : {})
         }
-        const result = await this.tmallProbe.run(account, runOptions)
+        const result = await (this.coordinator
+          ? this.coordinator.run([`shop:${account.platform}/${account.shop_id}`, `account:${account.account_id}`], () => this.tmallProbe.run(account, runOptions), options.signal)
+          : this.tmallProbe.run(account, runOptions))
         if (result.status === 'NEED_HUMAN_LOGIN') {
           await this.accounts.updateLoginStatus(account.account_id, 'need_human_login', new Date().toISOString())
         }
